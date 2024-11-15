@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository contains the data and analysis codes used for evaluating Conference of Parties (COP) participant figures for the report *"Quo Vadis COP 2024"* by Benito Müller, Jen Allan, and Matthias Roesti.
+This repository contains the data and analysis codes used for evaluating Conference of Parties (COP) participant figures for the report *"Quo Vadis COP? 2024 Update"* by Benito Müller, Jen Allan, Matthias Roesti, and and Luis Gomez-Echeverri.
 
 The goal of this analysis is to extract, clean, and analyze participant data from the COP and Subsidiary Body (SB) sessions, visualizing trends and key insights into country delegations and high-level representation.
 

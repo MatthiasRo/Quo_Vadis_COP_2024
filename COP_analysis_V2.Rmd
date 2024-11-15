@@ -1,0 +1,2381 @@
+---
+title: "COP - Analysis of Attendance Patterns"
+output:
+  html_document: default
+  # pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages, include = FALSE}
+library(xlsx)
+library(foreign)
+library(tidyverse)
+library(wesanderson)
+library(wordcloud)
+library(lfe)
+library(readxl)
+library(gridExtra)
+library(stringdist)
+```
+
+
+```{r prepare data, include=FALSE, echo=FALSE}
+COP21 <- read.xlsx2("./data/COP21_part1_onlyparty.xlsx", header = T, sheetIndex = 1)
+COP21_2 <- read.xlsx2("./data/COP21_part2_onlyparty.xlsx", header = T, sheetIndex = 1)
+COP21 <- bind_rows(COP21, COP21_2)
+
+COP23 <- read.xlsx2("./data/COP23_onlyparty.xlsx", header = T, sheetIndex = 1)
+COP25 <- read.xlsx2("./data/COP25_onlyparty.xlsx", header = T, sheetIndex = 1)
+COP27 <- read.xlsx2("./data/COP27_onlyparty.xlsx", header = T, sheetIndex = 1)
+COP28 <- read_excel("./data/COP28 FLOP On-site.xlsx", sheet = 1)
+COP28_overflow <- read_excel("./data/COP28 FLOP On-site.xlsx", sheet = 2)
+
+COP28 <- COP28 %>% rename(participant_country = Nominator, participant_name = Name, participant_job = `Functional title`, participant_agency_ministry = Department)
+COP28_overflow <- COP28_overflow %>% rename(participant_country = Nominator, participant_name = Name, participant_job = `Functional title`, participant_agency_ministry = Department)
+
+title_regex <- "(H\\.E\\. Mr\\. Dr\\.|H\\.E\\. Mr\\.|H\\.E\\. Ms\\.|S\\.E\\. Mme\\.|S\\.E\\. M\\.|S\\.E\\. Sra\\.|S\\.E\\. Sr\\.|S\\.E\\.|H\\.E\\.|Mr\\. Dr\\.|Ms\\. Dr\\.|Ministro|Ambassador|Mme\\.|Mme|M\\.|Mr\\.|Ms\\.|Mr|Ms|Dr\\.|Sra\\.|Sr\\.|Amb\\.|Hon\\.|Dr |Miss |H\\.H\\.|Dr, |Shaikha |Shaikh|Sh\\.|Prof\\.|Ind\\.|H\\.R\\.H\\.|HRH|His Royal Highness Crown Prince|His Majesty|Her Majesty|H\\.R\\.H|Honorable|Rt\\.Hon\\.|Engr\\.|Amb\\.|H\\. E\\. Amb\\.|Chief|Major|eH\\.H\\.|Khalifa|Rt Hon|The Hon|Baroness|The Baroness|Mx\\.|Honourable|Deputy|Senator|Col\\.|Hon |H\\.M\\.|H\\.s\\.h\\.|S\\.\\A\\.\\R\\.|NT |H\\.H\\. SH\\.|H\\.H\\. Mr\\.|H\\.E\\. Mr\\. Col\\.|H\\.M\\. King|H\\.R\\.H\\. Mr\\.|H\\.H\\. Prince|H\\.H\\. Ms\\.|Mr\\. H\\.E\\.|H\\.r\\.h\\.|ial )"
+
+# Create the new 'participant_prefix' column
+COP28 <- COP28 %>%
+  mutate(participant_prefix = str_extract(participant_name, title_regex))
+COP28_overflow <- COP28_overflow %>%
+  mutate(participant_prefix = str_extract(participant_name, title_regex))
+
+# Replace NA with empty strings for cases with no match
+COP28$participant_prefix[is.na(COP28$participant_prefix)] <- ""
+COP28_overflow$participant_prefix[is.na(COP28$participant_prefix)] <- ""
+table(COP28$participant_prefix)
+noprefix <- COP28 %>% filter(participant_prefix == "")
+
+SB42 <- read.xlsx2("./data/SB42_onlyparty.xlsx", header = T, sheetIndex = 1)
+SB46 <- read.xlsx2("./data/SB46_onlyparty.xlsx", header = T, sheetIndex = 1)
+SB50 <- read.xlsx2("./data/SB50_onlyparty.xlsx", header = T, sheetIndex = 1)
+SB56 <- read.xlsx2("./data/SB56_onlyparty.xlsx", header = T, sheetIndex = 1)
+
+SB58 <- read_excel("./data/SB58 FLOP_on-site.xlsx", sheet = 1)
+SB58 <- SB58 %>% rename(participant_country = nominator, participant_name = name, participant_job = func_title, participant_agency_ministry = department)
+SB58 <- SB58 %>%
+  mutate(participant_prefix = str_extract(participant_name, title_regex))
+
+# Replace NA with empty strings for cases with no match
+SB58$participant_prefix[is.na(SB58$participant_prefix)] <- ""
+table(SB58$participant_prefix)
+noprefix <- SB58 %>% filter(participant_prefix == "")
+
+COP21 <- COP21 %>% distinct() %>% mutate(event = "COP21", year = 2015)
+COP23 <- COP23 %>% distinct() %>% mutate(event = "COP23", year = 2017)
+COP25 <- COP25 %>% distinct() %>% mutate(event = "COP25", year = 2019)
+COP27 <- COP27 %>% distinct() %>% mutate(event = "COP27", year = 2022)
+COP28 <- COP28 %>% distinct() %>% mutate(event = "COP28", year = 2023)
+COP28_overflow <- COP28_overflow %>% distinct() %>% mutate(event = "COP28", year = 2023)
+SB42  <- SB42  %>% distinct() %>% mutate(event = "SB42", year = 2015)
+SB46  <- SB46  %>% distinct() %>% mutate(event = "SB46", year = 2017)
+SB50  <- SB50  %>% distinct() %>% mutate(event = "SB50", year = 2019)
+SB56  <- SB56  %>% distinct() %>% mutate(event = "SB56", year = 2022)
+SB58  <- SB58  %>% distinct() %>% mutate(event = "SB58", year = 2023)
+
+df <- bind_rows(COP21, COP23, COP25, COP27, COP28, SB42, SB46, SB50, SB56, SB58)
+
+
+# Clean and encode relevant variables
+prefixes_new <- unique(df %>% filter(event %in% c("COP27", "SB56")) %>% pull(participant_prefix))
+prefixes_old <- unique(df %>% filter(!event %in% c("COP27", "SB56")) %>% pull(participant_prefix))
+
+setdiff(prefixes_new, prefixes_old)
+
+prefixes <- unique(df$participant_prefix)
+write.xlsx2(prefixes, "./prefixes.xlsx")
+
+df <- df %>% mutate(
+  high_level = if_else(participant_prefix %in% c("H.E. Mr.", "H.E. Ms.", "H.E.Mr.", "H.E.", "H.E.Mr.", "H.E.Ms.", "H.E. Mr. Dr.", "H.H. Mr.", "H.E. Mr. Col.",
+                                                 "H.R.H.", "HRH", "H.R.H","His Royal Highness Crown Prince", "His Royal Highness Crown Prince", "H.M. King",
+                                                 "S.E. Mme", "S.E. Mme.", "S.E. Sr.", "S.E. Sra.", "S.E. M.", "Ministro", "H.M.", "H.H.",
+                                                 "Sh.", "Shaikha ", "Shaikha", "Shaikh", "Prince", "H. E. Amb.", "H.s.h.", "eH.H.",
+                                                 "S.E.",  "Khalifa", "His Majesty", "Her Majesty", "H.H. Mr.", "H.E. Mr. Col.", "H.H. SH.",
+                                                 "H.M. King", "H.R.H. Mr.", "H.H. Prince", "H.H. Ms.", "Mr. H.E.", "H.r.h."), 1, 0) 
+)
+
+check <- df %>% filter(high_level == 0) %>% pull(participant_prefix) %>% unique()
+
+# Ensure harmonized country structure (if rerunning with new data, check that the crosswalk vector still corresponds to the true values!)
+country_crosswalk <- data.frame(
+  participant_country = unique(df$participant_country), 
+  participant_country_std =  c(
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia",
+  "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin",
+  "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi",
+  "Cabo Verde", "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia",
+  "Comoros", "Congo", "Cook Islands", "Costa Rica", "Cote d'Ivoire", "Croatia", "Cuba", "Cyprus", "Czech Republic",
+  "North Korea", "DR Congo", "Denmark", "Greenland", "Djibouti", "Dominica", "Dominican Republic", "Ecuador", "Egypt",
+  "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Ethiopia", "European Union", "Fiji", "Finland", "France",
+  "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau",
+  "Guyana", "Haiti", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel",
+  "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia",
+  "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi",
+  "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Micronesia",
+  "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands",
+  "New Zealand", "Nicaragua", "Niger", "Nigeria", "Niue", "Norway", "Oman", "Pakistan", "Palau", "Panama",
+  "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "South Korea", "Moldova",
+  "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa",
+  "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone",
+  "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Sudan", "Spain",
+  "Sri Lanka", "Sudan", "Suriname", "Eswatini", "Sweden", "Switzerland", "Syria", "Tajikistan", "Thailand",
+  "North Macedonia", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan",
+  "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "Tanzania", "United States", "Uruguay",
+  "Uzbekistan", "Vanuatu", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe", "Iran", "Palestine", "Bolivia", "Cote d'Ivoire", "Czech Republic", "North Korea", "Laos", "Cote d'Ivoire", "Eswatini", "North Macedonia", "Gibraltar", "Turkey", "Georgia", "United States", "United Kingdom", "Holy See", "Netherlands", "Brunei", "Dominican Republic", "El Salvador", "European Union", "Laos", "Marshall Islands", "Netherlands"
+) 
+)
+
+check <- df %>% filter(participant_country == "Unknown") # they are from the Georgia delegation - fixed in crosswalk
+view(country_crosswalk)
+unique(df$participant_country)
+
+
+df <- df %>% left_join(country_crosswalk, by = "participant_country")
+COP28_overflow <- COP28_overflow %>% left_join(country_crosswalk, by = "participant_country")
+anyNA(df$participant_country_std) # should return FALSE
+
+df <- df %>% select(-participant_country)
+COP28_overflow <- COP28_overflow %>% select(-participant_country)
+
+table(df$event)
+
+
+# Identify heads of state (president, Prime minister, or equivalent) and other senior officials
+df_hl <- df %>% filter(high_level == 1)
+
+heads_of_state <- c(
+  "The President of the Islamic Republic of Afghanistan",
+  "President of the Republic of Albania",
+  "Prime Minister of Algeria",
+  "Head of Government",
+  "Vice President of Angola",
+  "Prime Minister",
+  "Vicepresidente de la Nación",
+  "President of the Republic of Armenia",
+  "Prime Minister of Australia",
+  "Federal Chancellor",
+  "President of the Republic of Azerbaijan",
+  "Prime Minister, Minister of Finance",
+  "Crown Prince of Kingdom of Bahrain",
+  "Prime Minister of Belgium",
+  "Premier Ministre",
+  "President of the Republic of Bulgaria",
+  "President",
+  "Prime Minister of Canada",
+  "Premier Ministre",
+  "Presidenta de Chile",
+  "President of Comoros",
+  "Président de la République",
+  "Prime Minister of the Republic of Croatia",
+  "President of the Republic of Cyprus",
+  "Prime Minister of Czech Republic",
+  "Prime Minister",
+  "Président de la République du Cameroun",
+  "Presidenta de Chile",
+  "President of the Republic of Cyprus",
+  "Prime Minister of Czech Republic",
+  "President of The Arab Republic of Egypt",
+  "President of Equatorial Guinea",
+  "His Majesty",
+  "President of Turkmenistan",
+  "Crown Prince of Abu Dhabi",
+  "Vice President and Prime Minister of the UAE and Ruler of Dubai",
+  "President of the United Arab Emirates",
+  "Deputy Ruler of Abu Dhabi",
+  "Fujairah Crown Prince",
+  "Crown Prince of Ajman",
+  "Crown Prince of Dubai",
+  "First Deputy Ruler of Dubai Deputy Prime Minister of Finance",
+  "UAE Vice President, Deputy Prime Minister, and Chairman of the Presidential Court",
+  "President of the Federal National Council",
+  "President of the Global Council for Tolerance and Peace",
+  "Head of State",
+  "Chancellor of the Federal Republic of Germany",
+  "President of the Republic of Ghana",
+  "Vicepresidente",
+  "Presidente de la República de Honduras",
+  "President of the Republic of Indonesia",
+  "Vice-President of the Islamic Republic of Iran",
+  "President of Iraq",
+  "An Taoiseach (Prime Minister)",
+  "Prime-Minister",
+  "The King of Jordan",
+  "Prime Minister of Portugal",
+  "President of Peru",
+  "President of the Republic of the Philippines",
+  "Prime Minister of Pakistan",
+  "Presidente de la República de Panamá",
+  "President of the Republic of Lithuania",
+  "President of the Republic of Latvia",
+  "Prime Minister of Mozambique",
+  "President of Namibia",
+  "Prime Minister of Pakistan",
+  "President of the Russian Federation",
+  "President of South Africa",
+  "His Majesty the King of Sweden",
+  "President of the Republic of Serbia",
+  "President of the Russian Federation",
+  "President of Sri Lanka Presidential Secretariat",
+  "President of the Republic of Zambia",
+  "President of Turkmenistan",
+  "President of Switzerland",
+  "Deputy Prime Minister",
+  "President of Ukraine",
+  "First Minister of Scotland",
+  "President of the Swiss Confederation",
+  "President of Zimbabwe",
+  "Prime Minister of the Cook Islands",
+  "Prime Minister of Latvia",
+  "President of the Republic of Latvia",
+  "President of Kiribati",
+  "Prime Minister of Sweden",
+  "Prime Minister of the Republic of Latvia",
+  "President Presidencia de la República de Honduras",
+  "The President of the Republic of Azerbaijan",
+  "President of the Federative Republic of Brazil",
+  "His Excellency the President",
+  "Prime minister",
+  "Prime Mnister",
+  "President of the Republic of Belarus",
+  "President of the Republic Cuba",
+  "Prime Minister of the Czech Republic",
+  "President of Republic of Bulgaria",
+  "Pésident de la République, Chef de l'Etat",
+  "Président de l'Union des Comores",
+  "President of the Republic of Belarus",
+  "Président de la République de Djibouti",
+  "His Majesty's Advisor of Foreign Affairs",
+  "Prime Minister of Republic of Estonia",
+  "Prime Minister of Egypt",
+  "Prime Minister of Georgia",
+  "Federal Chancellor of Germany",
+  "Prime Minister of the Republic of Yemen",
+  "Prime Minister of Andorra",
+  "President of the Republic of Yemen",
+  "HM The King",
+  "Minister and President",
+  "Président",
+  "Présidente",
+  "His Excellency the President of the Republic of Kiribati",
+  "President of the Republic of Kazakhstan",
+  "President of the Republic of Maldives",
+  "President of Liberia",
+  "President of the Republic",
+  "Second Lady",
+  "President of the Republic of Mozambique",
+  "President of North Macedonia",
+  "Prime Minister of KRG",
+  "Prersident of the State of Israel",
+  "President of the State of Israel",
+  "Her Majesty Queen",
+  "His Majesty the King",
+  "Her Majesty the Queen of Malaysia",
+  "President of Hungary",
+  "His Majesty the King Of Malaysia",
+  "Premier of Niue",
+  "President of the Republic of North Macedonia",
+  "Son Altesse Sérénissime Le Prince Albert II",
+  "President of Kurdistan Region of Iraq",
+  "His Excellency President",
+  "Presidenta de Honduras",
+  "President of Liberia",
+  "First Lady of the Republic of Liberia",
+  "Prime Minister of Papua New Guinea",
+  "President of the Republic of Poland",
+  "President of the Republic of Seychelles",
+  "President of the Slovak Republic",
+  "President of the Republic of Slovenia",
+  "President of Suriname",
+  "President of the Republic of South Sudan",
+  "President of the Republic of Mozambique",
+  "President of the Paraguayan Republic",
+  "President of the Islamic Republic of Pakistan",
+  "Prime Minister of Papua New Guinea",
+  "Prime Minister and Minister of Foreign Affairs of Qatar",
+  "Emir of the State of Qatar",
+  "President of Romania",
+  "President of Rwanda",
+  "His Majesty The King Of Malaysia",
+  "Prime Minister of Papua New Guinea",
+  "President of the Republic of Slovenia",
+  "President of the Republic of Slovakia",
+  "President of the Republic of the Gambia",
+  "President of the Republic of Kenya",
+  "Prime Minister of the Republic of Korea",
+  "President of the Republic of Kiribati",
+  "President of North Macedonia",
+  "Prime Minister of Lebanon",
+  "Prime Minister of Norway",
+  "President of the Republic of Panama",
+  "President of Paraguay",
+  "Prime Minister of Papua New Guinea",
+  "President of the Republic of Peru",
+  "President of the Republic of the Congo",
+  "Prime Minister of the Republic of Turkey",
+  "Prime Minister of Tunisia",
+  "Prime Minister of Uganda",
+  "Prime Minister of Vietnam",
+  "President of Zambia",
+  "President of Zimbabwe",
+  "President of the United States",
+  "Ulu-o-Tokelau",
+  "Prime Minister of the Islamic Republic of Pakistan",
+  "President of the Paraguayan Republic",
+  "Prime Minister and Minister of Foreign Affairs",
+  "President of the Republic of Seychelles",
+  "President of Suriname",
+  "President of the Republic of Poland",
+  "President of the Republic of Zimbabwe",
+  "President of Rwanda",
+  "President of Tanzania",
+  "President of the Republic of Moldova", 
+  "Federal President of Germany",
+  "Captain Regent", # HOG in san marino 
+  "Honorable Prime Minister and COP23 President",
+  "Presidente de la República Bolivariana de Venezuela",
+  "President of Republic of Serbia",
+  "HH. Sheikh Amir of the State of Qatar", # HOG
+  "President and Head of State",
+  "King of Morocco",
+  "President of Montenegro",
+  "President of Mongolia",
+  "FSM President", # HoG Micronesia
+  "Presidente de México",
+  "Président de la République Islamique de Mauritanie",
+  "President of the Republic of Mauritius",
+  "Président de la république du Mali",
+  "Président de la République de Madagascar",
+  "The King of Lesotho",
+  "The President",
+  "President of the Republic, Head of State",
+  "Président de la République Française",
+  "The President of the Republic of Finland",
+  "President of the European Commission",
+  "Prime Minister of the Republic of Estonia",
+  "Président de la Republique",
+  "Presidente", 
+  "Président de la République Présidence de la République",
+  "Presidente Constitucional",
+  "Presidente de la República del Ecuador",
+  "Hon. Prime Minister",
+  "Premier of Sarawak", 
+  "President Of Liberia",
+  "president of the arab republic of egypt",
+  "Honourable Prime Minister", 
+  "Primer Ministro", 
+  "Prime Minister of the Republic of Albania",
+  "Prime Minister of Tonga",
+  "President of the People's Democratic Republic of Algeria",
+  "Federal President of the Republic of Austria",
+  "Prime Minister and Minister of Finance",
+  "Crown Prince and Prime Minister",
+  "President de la Republique",
+  "Premier Ministre, Chef du Gouvernement",
+  "President of the Arab Republic of Egypt",
+  "Prime Minister Government of Eswatini",
+  "Prime Minister Office of the Prime Minister",
+  "President of Ghana",
+  "Prime Minister of the Hellenic Republic",
+  "President of Israel",
+  "King of the Hashemite Kingdom of Jordan",
+  "Premier ministre, Ministre d‘Etat",
+  "Hon. Prime Minister Republic of Malta",
+  "President/Head of State",
+  "Prime Minister of the Republic of Moldova",
+  "President of the Republic of Rwanda",
+  "President of the Republics of Seychelles",
+  "President of the Democratic Socialist Republic of Sri Lanka",
+  "President of the Republic of Suriname",
+  "Cheffe de gouvernement",
+  "President of the United Republic of Tanzania"
+)
+
+senior_officials <- c(
+  "Minister of Agriculture and Rural Development",
+  "Minister for Agriculture, Food and Forest",
+  "Federal Councillor Federal Council Federal Department of the Environment, Transport, Energy and Communications",
+  "Minister of Foreign Affairs and the National Community Abroad",
+  "Federal Minister for Finance",
+  "Minister for Legal Affairs Attorney General",
+  "Minister of Oil and Environment",
+  "Private Secretary of HRH",
+  "Senior Minister and Minister of Foreign Affairs and Foreign Trade",
+  "Belgian Federal Minister Climate, Environment, Sustainable Development and Green Deal",
+  "Minister of the Federal Supreme Court",
+  "Senator of the Republic/President of the Federal Senate and of the National Congress",
+  "Ministry of Primary Resources and Tourism",
+  "Membre du Gouvernement, Ministre",
+  "Ministre Affaires Étrangères",
+  "Minister Ministère de l'Environnement et du Développement Durable",
+  "Ministre Presidence de la Republique",
+  "Ministre d' Etat Dircab Prce Presidence de la Republique",
+  "Ministro de Energía",
+  "Ministerio De Transportes y Telecomunicaciones",
+  "Ministra del Medio Ambiente",
+  "Vicepresident of the Republic of Colombia",
+  "Vice-Président",
+  "Minister of Energy, Commerce and Industry",
+  "Vice-Premier Ministre, Ministre de l'Environnement et Développement Durable",
+  "Minister of Environment, Water and Ecological Transition",
+  "Minister of Electricity & Renewable Energy",
+  "Minister of Health and Population",
+  "Minister of Communications and Information Technology",
+  "Minister of Social Solidarity",
+  "Minister of Agriculture & Land Reclamation",
+  "Minister of Civil Aviation",
+  "Minister of Education and Technical Education",
+  "Minister of Higher Education and Scientific Research",
+  "Minister of Water Resources and Irrigation",
+  "Minister of Trade and Industry",
+  "Minister of Tourism and Antiquities",
+  "Minister of the Environment of the Republic of Estonia",
+  "Minister The Federal Democratic Republic of Ethiopia",
+  "Minister Ministry of Water and Energy",
+  "Ministre du Budget et des Comptes Publics",
+  "Ministre de la Décentralisation, de la Cohésion et du Développement des Territoires",
+  "Ministre de la Culture, des Sports, chargé de la Jeunesse et de la Vie Associative",
+  "Secretary General of the Presidency of the Republic",
+  "Minister for Climate Resilience, Environment and Renewable Energy",
+  "Vice Primer Minister",
+  "Secretario de Estado Despacho Ministerial",
+  "Minister of Food, Fisheries and Agriculture",
+  "The Vice President of the Republic of Indonesia",
+  "Minister for Environment and Forestry",
+  "Minister of Marine Affairs and Fisheries",
+  "Deputy Prime Minister /Minister of Foreign Affairs",
+  "Minister of Environmental Protection",
+  "King of the Hashemite Kingdom of Jordan",
+  "H. H. the Crown Prince",
+  "Deputy Prim Minister & Minister of Oil",
+  "Minister of foreign Affairs",
+  "Minister of Environmental Protection and Regional Development of Latvia",
+  "Ministre de l'Environnement, du Climat et du Développement durable",
+  "Ministre de l'Agriculture et de l'Elevage",
+  "Président du Sénat",
+  "Ministre de l'Environnement et du Developpement Durable",
+  "Vice President of the Republic of Maldives",
+  "Secretary, Foreign Relations",
+  "Minister for the Environment, Energy and Enterprise",
+  "Hon. Minister Social and Affordable Accommodation",
+  "Minister of Natural Resources & Commerce",
+  "Secretary/Minister/UNFCCC Focal Point",
+  "Ministre Plénipotentiaire, Conseiller Spécial Chargé des Questions d'Environnement",
+  "Minister in the Presidency",
+  "Minister for Climate and Energy",
+  "Minister of Infrastructure and the Environment",
+  "Minister Advisor and Ambassador",
+  "Ministre d’Etat",
+  "Minister for Information & Broadcasting",
+  "Foreign Secretary of Pakistan",
+  "Minister for Environment Conservation & Climate Change",
+  "Deputy Prime Minister and Minister of Foreign Affairs",
+  "Honorable Minister of Agriculture",
+  "Minister of Infrastructure",
+  "Minister of Agriculture & Forestry",
+  "Minister for Ministry of Finance",
+  "Minister in the Presidency",
+  "Minister of International Relations & Cooperation",
+  "Minister of Foreign Affairs, International Business and International Cooperation of the Republic of Suriname",
+  "Minister of the Council of Ministers and Extraordinary Envoy of the President of the Democratic Republic of Timor-Leste",
+  "Minister for Finance",
+  "Minister of Industry, mines and energy",
+  "Minister of Industry, mines and energy",
+  "Minister of Lands, Housing and Urban Development",
+  "Minister of Energy and Mineral Development",
+  "Minister of State for Animal Industry",
+  "Minister of Presidential Court",
+  "Minister of State for Foreign Trade",
+  "Minister of State for Youth",
+  "Minister of State for Climate",
+  "Minister for Schools and College System",
+  "Minister for Environment and Land Reform",
+  "Hon. Minister of Sustainability, Innovation and the Environment",
+  "Minister of Natural Resources and Labour",
+  "Minister for Energy and Climate Change",
+  "Minister for Foreign Affairs and East African Cooperation",
+  "VICE PRESIDENT of the Republic of Uzbekistan -Chairman of the Senate of the Oliy Majlis of the Republic of Uzbekistan",
+  "Minister of Foreign Affairs and External Trade of Vanuatu",
+  "Minister of Foreign Affairs and Expatriates",
+  "Secretary of State for Energy Transition, Transport and Mobility",
+  "Minister and Director",
+  "Minister of Energy and Waters",
+  "Crown Prince of Abu Dhabi and Chairman of the Abu Dhabi Executive Council",
+  "Vicepresidenta Tercera del Gobierno y Ministra",
+  "Vice President of the Republic of South Sudan",
+  "His Highness the Crown Prince of the State of Kuwait",
+  "Vice President of the Republic of Nigeria",
+  "Vice President of the Republic of the Gambia",
+  "Vice-President of Ghana",
+  "Deputy Prime Minister",
+  "Chairwoman of the Council of ministers of BiH",
+  "President of the Libyan presidential council",
+  "H.S.H. Hereditary Prince Alois of Liechtenstein",
+  "Vice President of The Republic of the Gambia",
+  "His Highness the Crown Prince of the State of Kuwait",
+  "His Royal Highness Prince",
+  "Crown Prince of Denmark",
+  "Crown Prince",
+  "Vice President of Republic of Uganda",
+  "Vice President",
+  "Ministry of Foreign Affairs of Afghanistan", 
+  "Ministry of Finance",
+  "Ministry of Labor, Social Affairs, Martyrs and Disabled",
+  "Ministry of Environment",
+  "State's Minister of Foreign Affairs and International Cooperation",
+  "Minister of Water Resources and Environment",
+  "Minister of Environment, Agriculture and Sustainability",
+  "Vice President",
+  "Secretary of State",
+  "Ministro Plenipotenciario",
+  "Minister of Foreign Affairs",
+  "Minister for Foreign Affairs",
+  "Minister for the Environment",
+  "Minister of State",
+  "Minister of Environment and Water",
+  "Ministre",
+  "Minister of Water, Environment, Land Management and Urban Planning",
+  "Ministre des Relations Exterieures",
+  "Ministre des Eaux et Forêts",
+  "Ministre des Affaires Etrangères",
+  "Minister of Civil Aviation and the National Meteorology",
+  "Minister of Hydrolic and Pastoralism",
+  "Minister of Foreign Affairs",
+  "Ministro de Medio Ambiente de Chile",
+  "Ministro de Relaciones Exteriores",
+  "Minister of Environment and Sustainable Development",
+  "Ministre du Tourisme et de l'Environnement",
+  "Minister",
+  "Ministro de Ambiente",
+  "Minister of State for Environmental Affairs",
+  "Director of Office of the Chief of the President",
+  "Chief of the Presidential Cabinet",
+  "Minister of Foreign Affairs",
+  "Minister of Local Administration and Environment",
+  "Minister of foreign affairs",
+  "Deputy Prime Minister and Minister of Natural Resources and Environment",
+  "Vice Prime Minister",
+  "Ministre, Secrétaire générale de la Présidence de la République",
+  "Ancien Premier Ministre, Conseiller du Président de la République",
+  "Ministre de la santé",
+  "Minister of Finance",
+  "Minister of Health",
+  "Minister of Water and Environment",
+  "Minister of State for Animal Husbandry",
+  "Minister of Energy and Minerals Development",
+  "State Minister for Internal Affairs",
+  "Minister of Agriculture, Animal Industry and Fisheries",
+  "Minister of Foreign Affairs",
+  "Minister of Climate Change and Environment",
+  "Minister of Community Development",
+  "Minister of Cabinet Affairs",
+  "Minister of State Secretary General of the UAE Cabinet",
+  "Minister of State for International Cooperation",
+  "Minister of State for Financial Affairs",
+  "Minister of Federal Supreme Council Affairs",
+  "Minister of Economy",
+  "Minister of Energy & Infrastructure",
+  "Minister of Education",
+  "Minister of Justice",
+  "Minister of State for Artificial Intelligence, Digital Economy and Remote Work Applications",
+  "Minister of Health and Prevention",
+  "Minister of Culture and Youth",
+  "Minister of State for Government Development and the Future",
+  "Minister of State For Foreign Trade",
+  "Minister of State for Early Education",
+  "Minister of Investment",
+  "Deputy Prime Minister and Minister of the Interior",
+  "Minister of State for Energy Security and Net Zero",
+  "Minister of Agriculture, Lands, Housing & the Environment",
+  "Minister for Environment and Union Affairs",
+  "Minister of Foreign Affairs and Est Africa Cooperation",
+  "Minister of Finance and Planning",
+  "Minister, Chairman",
+  "Federal Minister",
+  "German Federal Minister for Food and Agriculture",
+  "German Federal Minister for Economic Cooperation and Development",
+  "State Secretary",
+  "Parliamentary State Secretary",
+  "Minister President Baden-Württemberg",
+  "Honourable Minister",
+  "Alternate Minister of Environment and Energy",
+  "Ministro de Ambiente y Recursos Naturales",
+  "Ministre Eaux et Forets",
+  "Minister of Governance",
+  "Secretario de Estado",
+  "Secretaria de Estado",
+  "Ministra Asesora en Comunicaciones y Estrategia",
+  "Secretario de Estado en el Despacho de Finanzas",
+  "Minister of State for Energy Affairs",
+  "Minister for the Environment and Natural Resources",
+  "Minister of Environment, Forests and Climate Change",
+  "Hon'ble Minister of State (IC) for Power,Coal &NRE",
+  "Minister for the Environment and Forestry",
+  "Coordinating Minister for Maritime Affairs",
+  "Minister for National Development Planning",
+  "Minister's Special Envoy for Climate Change",
+  "Minister of State Secretariat",
+  "Coordinating Minister for Economic Affairs",
+  "Minister of Energy and Mineral Resources",
+  "Minister of Health and Environment",
+  "Minister for the Environment, Community and Local Government",
+  "Minister for Communications, Energy and Natural Resources",
+  "Minister for Administrative Affairs",
+  "Cabinet Secretary (Minister)",
+  "Minister of Guard Affairs",
+  "Minister for Protocol Affairs",
+  "Minister of Environment",
+  "Minister of Energy and Water",
+  "Ministre du Développement Durable et des Infrastructures",
+  "Ministre de l'Environnement, de l'Ecologie, de la Mer et des Forêts",
+  "Ministre de l'Energie et des Hydrocarbures",
+  "Cabinet Minister",
+  "Minister of Natural Resources and Environment",
+  "Minister of State for Environment and Energy",
+  "Ministre des Finances",
+  "Ministre Energie",
+  "Ministre des Affaires Étrangères",
+  "Ministre des Finances et du Budget",
+  "Ministre des Affaires Etrangères et de la Coopération",
+  "Ministre de l’Education",
+  "Ministre Délégué Auprès du Ministre des Affaires Etrangères et de la Coopération",
+  "Ministre Plenipotentiaire",
+  "Ministre de l'Agriculture et de l'Equipement Rural",
+  "Minister for Foreign Trade and Development Cooperation",
+  "Minister of Traffic, Transport and Urban Planning",
+  "Minister for Climate Change Issues",
+  "Ministro/Secretario Privado para Políticas Nacionales",
+  "Ministry Environment, Urban Safety and Sustainable Development",
+  "Ministre Directeur de Cabinet",
+  "Honourable Minister",
+  "Minister Consular Immigration",
+  "Minister of Environment",
+  "Minister of State for Foreign Affairs",
+  "Minister for Environment",
+  "Secretary of State for the Environment",
+  "Minister of Environment",
+  "Minister Ministry of Environment",
+  "Minister of Foreign Affairs and International Cooperation",
+  "Minister of Environment and Water Resources",
+  "Minister for Strategic Development and Nordic Cooperation",
+  "Minister for International Development Cooperation",
+  "Minister for Energy",
+  "Minister for Financial Markets and Consumer Affairs, Deputy Minister for Finance",
+  "Minister for Housing, Urban Development and Information Technology",
+  "Minister of Tourism and Environmental Affairs",
+  "Minister for Climate and the Environment, Deputy Prime Minister",                              
+  "Federal Councilor",
+  "State Secretary for the Environment",
+  "Minister on Foreign Affairs",
+  "Ministre des Affaires Etrangères, de la coopération et de l’intégration africaine",
+  "Chef du Gouvernment",
+  "Ministre de l'Environnement et du Développement Durable",
+  "Minister of Foreign Affairs, Trade, Tourism, Environment and Labour",
+  "Permanent Representative to United Nations",
+  "Minister of State for Environment",
+  "Minister for Foreign Affairs of Ukraine",
+  "Secretary of State for Energy and Climate Change",
+  "Minister for Environment, Climate Change and Land Reform",
+  "Minister for Natural Resources",
+  "Northern Ireland Minister for the Environment",
+  "Minister of Agriculture",
+  "Minister of Climate Change",
+  "Minister of Environment and Energy",
+  "Minister of Mines and Energy",
+  "Minister of Energy and Industry",
+  "Minister for Communications Climate Action and Environment",
+  "Minister of the Environment, Energy and Housing",
+  "Minister of Environment",
+  "Minister of Water Resources",
+  "Minister, Ministry of Environment, Forest and Climate Change",
+  "Minister for Climate Resilience, the Environment, Forestry, Fisheries and Disaster Management",
+  "Minister of Foreign Affaires and Communities",
+  "Minister of State for Health",
+  "Ministre de l'Agriculture et de la Pêche Maritime",
+  "Ministre de la culture",
+  "Ministre du Développement Durable et des Infrastructures",
+  "Ministre de l'Environnement, de l'Ecologie, de la Mer et des Forêts",
+  "Ministre de l'Energie et des Hydrocarbures",
+  "Ministre des Affaires Étrangères",
+  "Ministre des Finances",
+  "Ministre des Finances et du Budget",
+  "Ministre de l’Agriculture et de la Pêche Maritime",
+  "Ministre des Affaires Etrangères et de la Coopération",
+  "Ministre de l’Education",
+  "Ministre Délégué Auprès du Ministre des Affaires Etrangères et de la Coopération",
+  "Ministre de l'Agriculture et de l'Equipement Rural",
+  "Ministre de l’Education et de la Formation Professionnelle",
+  "Ministre de l’Environnement et du Développement Durable",
+  "Ministre de l’Equipement, du Transport, de la Logistique et de l’Eau",
+  "Ministre de l’Economie et des Finances",
+  "Ministre du Plan et de la Coopération",
+  "Ministre des Postes et Télécommunications",
+  "Ministre des Relations avec les Institutions",
+  "Ministre du Tourisme",
+  "Ministre de l’Industrie",
+  "Ministre de l'Urbanisme",
+  "Ministre des Mines",
+  "Ministre de l’Energie",
+  "Ministre de l'Intérieur",
+  "Ministre de la Défense",
+  "Ministre de la Santé",
+  "Ministre de la Solidarité et de la Femme",
+  "Ministre des Ressources Naturelles",
+  "Ministre des Infrastructures",
+  "Ministre du Travail",
+  "Ministre des Transports",
+  "Ministre des Finances et de la Privatisation",
+  "Ministre des Technologies de l’Information",
+  "Ministre des Droits de l’Homme",
+  "Ministre de la Jeunesse",
+  "Ministre de la Justice",
+  "Ministre des Anciens Combattants",
+  "Ministre des Personnes Handicapées",
+  "Ministre des Affaires Sociales",
+  "Ministre des Femmes",
+  "Ministre des Travaux Publics",
+  "Ministre des Sports",
+  "Ministre de la Communication",
+  "Ministre des Cultes",
+  "Ministre des Forces Armées",
+  "Ministre des Affaires Parlementaires",
+  "Ministre des Collectivités Locales",
+  "Ministre de l’Agriculture et du Développement Rural",
+  "Ministre des Relations avec le Parlement",
+  "Ministre des Petites et Moyennes Entreprises",
+  "Ministre des Relations avec les Collectivités Locales",
+  "Ministre de l’Artisanat et des Petites et Moyennes Entreprises",
+  "Ministre des Energies Renouvelables",
+  "Ministre des Ressources Hydrauliques",
+  "Ministre des Technologies de l’Information et de la Communication",
+  "Ministre de la Recherche Scientifique et de l’Innovation",
+  "Ministre des Affaires Culturelles",
+  "Ministre des Affaires Religieuses",
+  "Ministre des Relations Extérieures",
+  "Ministre de la Femme et de la Famille",
+  "Ministre de l’Industrie et des Mines",
+  "Ministre des Affaires Etrangères et de la Coopération Internationale",
+  "Ministre des Mines et de la Géologie",
+  "Ministre de l’Energie et des Ressources Hydrauliques", 
+  "Ministre des Transports et de l’Equipement",
+  "Ministre des Finances et de l’Economie",
+  "Ministre des Infrastructures, des Transports et de la Logistique",
+  "Ministre de l’Environnement, des Eaux et Forêts",
+  "Ministre de l’Equipement, de l’Habitat et de l’Aménagement du Territoire",
+  "Ministre de l’Education et de la Formation",
+  "Ministre de la Jeunesse et des Sports",
+  "Ministre de la Communication et des Relations avec le Parlement",
+  "Ministre des Affaires Sociales et de la Santé",
+  "Ministre des Droits Humains",
+  "Ministre de la Décentralisation",
+  "Ministre des Affaires Etrangères, de la Coopération et des Congolais de l’Etranger",
+  "Ministre des Petites et Moyennes Entreprises et de l’Artisanat",
+  "Ministre des Transports, de l’Aviation Civile et de la Marine Marchande",
+  "Ministre de l’Energie et des Mines",
+  "Ministre de l’Aménagement du Territoire",
+  "Ministre des Affaires Etrangères et de la Coopération Africaine",
+  "Ministre de l’Industrie et du Commerce",
+  "Ministre de la Promotion de la Jeunesse et de l’Emploi des Jeunes",
+  "Ministre de l’Enseignement Supérieur",
+  "Ministre de la Formation Professionnelle",
+  "Ministre de l’Education Nationale",
+  "Ministre de la Culture et de la Francophonie",
+  "Ministre des Sports et Loisirs",
+  "Ministre de la Réconciliation Nationale",
+  "Ministre de l’Economie Numérique",
+  "Ministre de la Promotion de la Femme",
+  "Ministre des Transports et de la Logistique",
+  "Ministre de la Construction",
+  "Ministre de l’Equipement et de l’Entretien Routier",
+  "Ministre de la Promotion de la Jeunesse, de l’Emploi des Jeunes et du Service Civique",
+  "Ministre des Eaux et Forêts",
+  "Ministre de l’Economie Numérique et de la Communication",
+  "Ministre de la Solidarité, de la Cohésion Sociale et de la Lutte contre la Pauvreté",
+  "Ministre des Affaires Etrangères",
+  "Ministre de l’Intérieur",
+  "Ministre de l’Agriculture",
+  "Ministre de l’Economie",
+  "Ministre de l’Equipement",
+  "Ministre de la Culture",
+  "Minister for National Development Planning / Head of National Development Planning Agency",
+  "Ministre de l'Environnement",
+  "Ministre plénipotentiaire Chargé de mission auprès du Ministre d'Etat",
+  "Conseiller de Gouvernement-Ministre de l'Equipement, de l'Environnement et de l'Urbanisme",
+  "Ministre de l'Agriculture et de la Pêche Maritime",
+  "Prèsident de la chambre des Conseillers(senat)",
+  "Secrétaire d'Etat chargée du Développement Durable",
+  "Ministre déléguée auprès du ministre de l'Energie des Mines de l'Eau et de l'Environnement chargée de l'Eau",
+  "Secretaire d’Etat Aupres Du Ministre de l’Equipement, du Transport, de la Logistique et de l’Eau Charge du Transport",
+  "Minister of Environment and Tourism",
+  "Minister for Education & Home Affairs and Special Presidential Envoy for Climate Change",
+  "Minister of Economic Affairs and Climate Policy",
+  "Minister of Infrastructure and Water Management",
+  "State Secretary for Infrastructure and Water Management",
+  "Minister for Pacific Peoples",
+  "Minister - Private Secretary for National Policies of the President",
+  "Ministre Déléguée",
+  "Honourable Minister of State, Environment",
+  "Honorable Minister of Water Resources",
+  "Minister of the Environment",
+  "Secretary of State for Energy",
+  "Minister of Municipality & Environment",
+  "Deputy Prime-minister, Minister of Environment",
+  "Deputy Prime Minister & Minister Natural Resources & Environment",
+  "Ministre d'Etat",
+  "Ministre Conseiller Chargé de la Communication",
+  "Ministra",
+  "Minister of Science, Technology and Research",
+  "Minister for International Development Cooperation and Climate, and Deputy Prime Minister",
+  "Minister Ministry of Environment and Urbanisation",
+  "Minister of Energy and Emissions Reductions",
+  "Honourable Foreign Minister",
+  "Minister of Fisheries, Forestry the Environment and Sustainable Development",
+  "Minister of State Ministry of Human Development, Social Transformation and Poverty Alleviation",
+  "Minister of the Environment and Climate Change",
+  "Secrétaire d’Etat Auprès du Ministre d’Etat",
+  "Minister for the Environment of the Czech Republic",
+  "Minister of Environment, Solid Waste Management and Climate Change",
+  "Minister of Environment, Urban Sanitation and Sustainable Development",
+  "Minister for Climate Resilience, the Environment, Forestry, Fisheries and Disaster Management",
+  "Ministre de la Transition Écologique et Solidaire",
+  "Ministre de l'Agriculture et de l'Alimentation",
+  "Ministre de l'Agriculture",
+  "Ministre du Développement Durable et de l'Energie",
+  "Ministre délégué",
+  "Ministre de l'Environnement",
+  "Ministre de la Santé",
+  "Ministre de l'Énergie",
+  "Ministre du Tourisme",
+  "Ministre des Relations Extérieures",
+  "Ministre de la Justice",
+  "Ministre de la Défense",
+  "Ministre des Affaires Étrangères",
+  "Ministre de l'Intérieur",
+  "Ministre de l'Économie",
+  "Ministre des Affaires Sociales",
+  "Ministre de l'Industrie",
+  "Ministre de l'Équipement",
+  "Ministre de la Jeunesse",
+  "Ministre des Affaires Culturelles",
+  "Ministre de la Communication",
+  "Ministre des Affaires Religieuses",
+  "Ministre des Affaires Parlementaires",
+  "Ministre des Technologies de l'Information et de la Communication",
+  "Ministre des Relations avec le Parlement",
+  "Ministre de la Promotion de la Jeunesse",
+  "Ministre des Collectivités Locales",
+  "Ministre de la Culture et des Arts",
+  "Ministre des Mines",
+  "Ministre des Transports",
+  "Ministre des Ressources Hydrauliques",
+  "Ministre des Affaires Économiques",
+  "Ministre de l'Urbanisme",
+  "Ministre des Énergies Renouvelables",
+  "Ministre des Relations avec les Collectivités Locales",
+  "Ministre des Postes et Télécommunications",
+  "Minister of Communications, Climate Action and Environment",
+  "Minister of Gender, Children and Social Protection",
+  "Minister of Energy, Mining and Environment",
+  "Minister of Health, Environment and Nature of Curaçao",
+  "Tokelau Minister for Climate Change",
+  "Minister, Private Secretary for National Policies",
+  "Minister of Environment, Conservation and Climate Change",
+  "Minister of Foreign Affairs and Foreign Trade",
+  "Minister of Health and Wellness & Senior Minister Coordinating Social and Environmental Policy",
+  "Minister of Energy and Business",
+  "Minister of Natural Resources and Environmental Protection of the Republic of Belarus",
+  "Minister of Foreign Affairs of the Republic of Belarus",
+  "Minister of Climate, Environment, Sustainable Development and Green Deal",
+  "Brussels Minister responsible for Climate Change, Environment, Energy and Participatory Democracy",
+  "Minister of Climate, Energy, Mobility and Infrastructure",
+  "Federal Minister of Energy",
+  "Minister of Innovation, Science and Industry",
+  "Minister of Foreign Affairs",
+  "Minister of Oil & Environment - Special Envoy for Climate Affairs",
+  "Minister of Sustainable Development",
+  "Minister of Royal Court",
+  "Minister of Finance and National Economy",
+  "Minister of Health, Wellness, Social Transformation and the Environment",
+  "Minister of Civil Aviation and of the National Meteorology",
+  "Minister of Foreign Affairs of the Republic of Chile",
+  "Minister of Government Communications",
+  "Minister for Development Cooperation and Global Policy",
+  "Minister of Land, Water and Environment",
+  "Minister of Local Affairs and Environment",
+  "Minister for Women, Children and Social Protection",
+  "Minister of Planning and Economic Development",
+  "Minister of Health and Medical Services",
+  "Minister of Women, Children and Social Protection",
+  "Minister of Local Development",
+  "Minister of Agriculture and Land Reclamation",
+  "Minister of Electricity and Renewable Energy",
+  "Minister of Higher education",
+  "Minister of International Cooperation",
+  "Minister of Petroleum",
+  "Minister of Culture",
+  "Minister of Youth and Sports",
+  "Minister of Climate Action",
+  "Minister of Environment",
+  "Minister of Environment and Energy",
+  "Minister to Ministry of Foreign Affair and External Trade",
+  "Minister of Agrarian Development and Family Farming",
+  "Minister of the Industry",
+  "Minister of Development",
+  "Ministre Délégué Chargé du Budget",
+  "Ministre Délégué chargé des Ressources Animales",
+  "Ministre de l'Amenagement du Territoire, de l'Habitat et de l'Urbanisme",
+  "Ministre de l'eau et de l'assainissement",
+  "Ministre de l'environnement",
+  "Ministre des Affaires étrangères",
+  "Minister of Foreign Affairs",
+  "Minister of Heath and Population",
+  "Minister Of Youth and Sports",
+  "Minister of Oil",
+  "Minister of Finance",
+  "Minister of General Inteligence Services",
+  "Minister of Environment of Egypt",
+  "Minister of Youth and Sports",
+  "Minister of State",
+  "Minister of National Development Planning",
+  "Minister of Education, Culture, Research and Technology",
+  "Minister of State Secretary",
+  "Minister of Investment/Investment Coordinating Board",
+  "Minister of Natural Resources, Environment and Climate Change",
+  "Minister of Local Government Development",
+  "Minister of Public Health",
+  "Minister of Water Resource",
+  "Minister of Investment, Trade and Industry",
+  "Minister of Health, Welfare and Sport",
+  "Minister of Climate and Energy Policy",
+  "Minister of Investment",
+  "Minister of the Ministry of Natural Resources",
+  "Minister of Higher Education",
+  "Minister of Planning and Economic Development",
+  "Minister of Petroleum",
+  "Minister of Culture",
+  "Minister of Environment",
+  "Minister of Mines",
+  "Minister of Agriculture and Land Reclamation",
+  "Minister of Planning",
+  "Minister of Water and Environment",
+  "Minister of Health",
+  "Minister of Energy and Mineral Resources",
+  "Minister of Agriculture",
+  "Minister of Local Development",
+  "Minister of Electricity and Renewable Energy",
+  "Minister of Natural Resources",
+  "minister",
+  "Minister: Advisor to the Prime Minister",
+  "Minister for Health and Medical Services",
+  "Minister for Housing and Local Government",
+  "Minister for Agriculture and Waterways",
+  "Minister of Finance of Republic of Indonesia",
+  "Coordinating Minister for Maritime and Investment Affairs Ad interim / Minister for State Owned Enterprises",
+  "Minister of Energy and Mineral Resources of the Republic of Indonesia",
+  "MINISTER OF ENVIRONMENT AND ENERGY",
+  "Hon'ble Minister",
+  "External Affairs Minister",
+  "Minister of Oil",
+  "Chief of Staff-Office of His Majesty King Abdullah II Bin Al- Hussein",
+  "Minister Of Foreign Affairs",
+  "Prime Cabinet Secretary & Minister for Foreign Affairs",
+  "Deputy Prime Minister, Minister of Oil, and Minister of State for Economic Affairs",
+  "Minister of Transport",
+  "Minister of Public Health",
+  "Minister at the President Office",
+  "Minister at the Presidents Office",
+  "Minister of State for Foreign Affairs and Chief of Protocol",
+  "Deputy Prime Minister and Minister for Health",
+  "Minister for National Heritage, the Arts and Local Government",
+  "Minister for Social and Affordable Accomodation",
+  "Ministre plénipotentiaire, Conseiller Spécial de S.A.S. le Prince sur les questions d'environnement",
+  "Minister at the Presidency for Civil House Affairs",
+  "Minister for Climate and Energy Policy",
+  "Minister for nature and nitrogen policy",
+  "New Zealand Climate Change Minister",
+  "Minister of Agriculture, Fisheries, and Environment",
+  "Minister of Education and Higher Education",
+  "Minister of State for Defence Affairs",
+  "Minister of Finance",
+  "Minister of Environment",
+  "Minister of Health",
+  "Minister of Agriculture and Land Reclamation",
+  "Minister of International Cooperation",
+  "Minister of National Development Planning",
+  "Minister of Foreign Affairs",
+  "Minister of Youth and Sports",
+  "Minister of Higher Education",
+  "Minister of Planning and Economic Development",
+  "Minister of Petroleum",
+  "Minister of Energy",
+  "Minister of Education, Culture, Research and Technology",
+  "Minister of Investment/Investment Coordinating Board",
+  "Minister of Natural Resources, Environment and Climate Change",
+  "Minister of Culture",
+  "Minister of State Secretary",
+  "Minister of Local Government Development",
+  "Honorable Minister",
+  "Hon. Minister",
+  "Minister, Ambassador",
+  "Minister of Gas",
+  "Minister for Health and Social Welfare",
+  "Foreign Minister of Pakistan",
+  "Foreign Secretary",
+  "Minister for Internal Security",
+  "Speaker of the House of Representatives",
+  "Secretary (Minister)",
+  "Hon. Minister of Environment",
+  "Hon. Min. of Infrastructure",
+  "Hon. Minister of State in charge of public investment and resource mobilization",
+  "Minister of Agriculture and Food Security",
+  "Presidente del Gobierno",
+  "Minister of Spatial Planning and Environment",
+  "Minister of Foreign Affairs Suriname",
+  "Minister for Climate and the Environment",
+  "Deputy Prime Minister and Minister for Energy, Business and Industry",                                                                                                                                 
+  "Minister for International Development Cooperation and Foreign Trade",                                                                                                                                 
+  "Federal Councillor",                                                                                                                                                                                   
+  "Minister of Agriculture, Animal Industry and Fisheries",                                                                                                                                            
+  "Minster of State",
+  "Member Of Royal Family",
+  "Sheikha",
+  "Minister for Grand Bahama",
+  "Minister of the Environment and Housing",
+  "Minister of Tourism",
+  "Minister of Works, Municipalities Affairs and Urban Planning",
+  "Deputy Prime Minister and Minister of Foreign Affairs and European Affairs",
+  "Minister of Energy, Environment and Sustainable Development",
+  "Ministre-président du gouvernement Wallon",
+  "Walloon Region Minister of Local Governments, Cities, Housing and Energy - Belgian representative in the Environmental Council of the European Union",
+  "Ministre de l'Environnement, de l'Aménagement du territoire, de la Mobilité et des Transports, des Aéroports et du Bien-être animal",
+  "Brussels Capital Region Minister of Environment",
+  "Flemish Minister of the Environment Belgium Representative in the Council of the EU - International Environmental Issues",
+  "Ministre de l'Eau",
+  "Ministre de l’Énergie, des Recherches Pétrolières et Minières et du Développement des Énergies Renouvelables",
+  "Ministre d'Etat Chargé de la Coordination de la mise en oeuvre des OMD et des ODD",
+  "Ministro",
+  "Minister of Water, Environment, Land Management and Urban Planning",
+  "Minister Enviromment",
+  "Ministre Directeur du Cabinet Civil de la Présidence de la République du Cameroun",
+  "Minister of Environment and Parks",
+  "Minister, Manitoba Conservation and Water Stewardship / MLA",
+  "Ministre du Développement durable, de l'Environnement et de la Lutte contre les changements climatiques (MDDELCC)",
+  "Ministre des Affaires Etrangeres",
+  "Ministre of Civil Aviation and the National Meteorology",
+  "Ministre de Aff.Etrangères",
+  "Minister Ministère du Tourisme et de l'Environnement",
+  "Ministre de l'Economie Forestière et du Développement Durable Ministère du Développement Durable, de l'Economie Forestière et de l'Environnement",
+  "Ministre des Affaires Etrangères et de la Coopération Ministre",
+  "Ministre de l'agriculture et de l'élevage",
+  "Vicepresidenta de la República",
+  "Ministro de Relaciones Exteriores y Culto",
+  "Minister of Agriculture, Rural Development and Environment",
+  "Minister for Energy, Utilities and Climate",
+  "Minister for Finance, Mineral Resources and Foreign Affairs",
+  "Ministre de l'Habitat, de l'Urbanisme et de l'Environnement",
+  "Ministre de l'Energie, charge des Ressources naturelles",
+  "Ministro Delegado",
+  "Ministro Titular",
+  "Ministro de Estado",
+  "State Minister",
+  "Minister for Health & Medical Services",
+  "Minister of Agriculture and the Environment",
+  "Ministre / Président de la COP21",
+  "Ministre des Affaires sociales, de la Santé et des Droit des femmes",
+  "Ministre de l’Agriculture, de l’Agroalimentaire et de la Forêt",
+  "Secrétaire d'État chargé des Affaires européennes",
+  "Secrétaire d'État au Développement et à la Francophonie, auprès du ministre des Affaires étrangères et du Développement international",
+  "Secrétaire d'État chargé des Transports, de la Mer et de la Pêche, auprès de la ministre de l'Écologie, du Développement durable et de l'Énergie",
+  "Secrétaire d’Etat chargé de l’Enseignement supérieur et de la Recherche",
+  "Secrétaire d'État chargée des Droits des Femmes",
+  "Secrétaire d'État à la Réforme territoriale, auprès de la ministre de la Décentralisation et de la Fonction publique",
+  "Secrétaire d'Etat aux Sports",
+  "Minister of Environment and Natural Resources Protection of Georgia",
+  "Deputy Prime Minister and Minister of Foreign affiers",
+  "Minister for Royal Protocol",
+  "Secretary General",
+  "Président du Conseil des Ministres",
+  "Minister of State for Environement and Energy",
+  "Secretaría de Relaciones Exteriores",
+  "Secretaría de Medio Ambiente y Recursos Naturales",
+  "Secretaría de Desarrollo Agrario, Territorial y Urbano",
+  "Ministre Plénipotentiaire Chargé de Mission auprès du Ministre d'Etat",
+  "Son Altesse Royale Le Prince Moulay Rachid",
+  "SAR la Princesse Maria Esmeralda",
+  "Vice-Presidente",
+  "Federal Minister for Climate Change",
+  "Minister and Administrator General",
+  "Ministra de Relaciones Exteriores",
+  "Secretary of Health",
+  "Secretary of Finance",
+  "Secretary of Trade and Industry",
+  "Secretary of Transportation and Communication",
+  "Secretary of Energy",
+  "Secretary for Economic Planning",
+  "Secretary of Presidential Communications",
+  "Senior Secretary to the President for Foreign Affairs and National Security",
+  "Secretary-General",
+  "Ministre des Affaires Etrangères et des Sénégalais de l'Extérieur",
+  "Ministre Conseiller auprès du Président",
+  "Ministre Ministre de la Formation Professionnelle de l'Apprentissage et de l'Artisanat",
+  "Minister for the Environment and Water Resouces",
+  "Minister of Foreign Affairs and Investmemt Promotion",
+  "Minister of Post and Telecommunication",
+  "Minister, Ministry of Environment Forests and Physical Development",
+  "Secretary of State for International Development",
+  "Minister of Oil and Minerals",
+  "Ministre des Affaires Juridiques",
+  "Ministre des Affaires Expatriés",
+  "Walloon Region Minister of Budget, Finances, Energy, Climate and Airports",
+  "Flemish Region Minister of Environment, Nature and Agriculture",
+  "Minister of Energy and Industry at the Prime Minister's Office",
+  "Minister of Environment and Climate Change",
+  "Ministre Tourisme et Environnement Ministère du Tourisme et de l'Environnement",
+  "Minister for Health",
+  "Minister Ministry of Energy, Utilities and Climate",
+  "Minister of Foreign Affairs and Human Mobility",
+  "Minister Environment",
+  "State Minister, Ministry of Environment, Forest and Climate Change",
+  "Ministre de la Transition Ecologique et Solidaire",
+  "Ministre d'Etat Ministre de l'Environnement",
+  "German Federal Minister for Foreign Affairs",
+  "Ministre Conseiller auprès du Président",
+  "Ministre des Affaires Etrangères et des Sénégalais de l'Extérieur",
+  "Senior Secretary to the President for Foreign Affairs and National Security",
+  "Hon.Minister of Environment",
+  "Hon.Min. of Infrastructure",
+  "Hon.Minister of State in charge of public investment and resource mobilization",
+  "Deputy Prime Minister and Minister of Environment",
+  "Deputy Prime Minister and Minister of Economy",
+  "Minister of Agriculture, Animal Industry and Fisheries,",
+  "Deputy Ruler of Abu Dhabi, National Security Advisor",
+  "Member of Royal Family",
+  "Secretary General of Abu Dhabi Executive Council",
+  "Secretary General of Environment Agency in Abu Dhabi",
+  "Secretary General of the Office of the Presidential Court",
+  "Secretary General for General Womens Union",
+  "Secretary-General of the Office of Civilization and Promotion of Human Values",
+  "SECRETARY GENERAL",
+  "Minister Ministry of Planning, Civil Engineering and Ecology",
+  "Minister for Agriculture and Rural & Maritime Development and Climate Champion",
+  "Ministre de l'Environnement, de l'Énergie et de la Mer, chargée des Relations internationales sur le climat",
+  "Minister of State for Environment, Climate Change and Technology",
+  "Ministerio de Energía",
+  "Ministre Déléguée Chargée de l’Eau",
+  "Ministre plÃ©nipotentiaire ChargÃ© de mission auprÃ¨s du Ministre d'Etat",
+  "Ministre dÃ©lÃ©guÃ©e auprÃ¨s du ministre de l'Energie des Mines de l'Eau et de l'Environnement hargÃ©e de l'Eau",
+  "Secretaire d’Etat Aupres Du Ministre de l’Equipement, du Transport, de la Logistique et de l’Eau Charge du Transport",
+  "Deputy Prime Minister & Minister of Foreign Affairs",
+  "Minister for Energy and Emissions Reductions",
+  "Minister for Transport",
+  "Minister of Environment of Guinea-Bissau",
+  "Secretary of State of Tourism",
+  "Secretaria de Estado en los Despachos de Finanzas Secretaría de Finanzas",
+  "Secretario de Estado Secretaría de Relaciones Exteriores y Cooperación Internacional",
+  "Secretario de Estado Despacho Ministerial Secretaría de Recursos Naturales y Ambiente",
+  "Minister of State for EU Affairs",
+  "Minister of Environment, Forest and Climate Change and Minister of Information and Broadcasting",
+  "Ministre Plénipotentiaire, Conseiller Spécial Chargé des Questions d’Environnement",
+  "Minister of Climate",
+  "Minister for Environmental and Climate Action",
+  "Minister, Head of Delegation",
+  "Minister for the Environment, Sustainability, Climate Change, Heritage and Culture",
+  "Vice President of the Republic of Yemen",
+  "Minister of Tourism and Environment",
+  "Deputy Prime Minister and Minister of Infrastructure and Energy",
+  "Minister of External Relations",
+  "State Secretary for Climate Action",
+  "Hon'ble State Minister",
+  "Vice-Présidente de la République",
+  "Minister  to Ministry of Foreign Affair and External Trade",
+  "MInister",
+  "Head Minister",
+  "First Class Minister",
+  "Ministre d'Etat Diecteur de cabine",
+  "Ministre d'Etat, Ministre des Affaires Etrangères",
+  "Danish Minister of Taxation",
+  "Ministre de l'Economie et des Finances", 
+  "Ministre de l'Energie", 
+  "Ministro Delegado a la Presidencia de la República Encargado de Ceremonias y Traducciones",
+  "Ministro Encargado del Gabinete Civel del Presidente",
+  "Ministro de Minas e Hidrocarburos",
+  "Ministro de Asuntos Exteriores y Cooperación",
+  "Estonian Minister of Climate",
+  "Federal Minister for Food and Agriculture",
+  "Roya Family",
+  "Crown Prince of The Hashemite Kingdom of Jordan",
+  "President of the Council of Ministers",
+  "Royal Family",
+  "The Crown Prince of Pahang",
+  "Crown Prince of Pahang",
+  "Principal Secretary to the President on Foreign Relations"
+)
+
+
+df_hog <- df_hl %>% filter(participant_job %in% heads_of_state)
+df_ministers <- df_hl %>% filter(participant_job %in% senior_officials)
+df_other_hl <- df_hl%>% filter(!participant_job %in% c(heads_of_state, senior_officials) )
+
+df_hog <- df_hog %>% mutate(hog = 1) %>% select(participant_name, participant_prefix, participant_job,
+                                    participant_agency_ministry, event, hog, year)
+df_ministers <- df_ministers %>% mutate(senior_official = 1)  %>% select(participant_name, participant_prefix, participant_job,
+                                    participant_agency_ministry, event, senior_official, year)
+
+
+# Merge information back
+df <- df %>% left_join(df_hog, by = c("participant_name", "participant_prefix", "participant_job",
+                                    "participant_agency_ministry", "event", "year"))
+df <- df %>% left_join(df_ministers, by = c("participant_name", "participant_prefix", "participant_job",
+                                    "participant_agency_ministry", "event", "year"))
+
+df <- df %>% mutate(
+    hog = if_else(hog != 1 | is.na(hog), 0, hog),
+    senior_official = if_else(senior_official != 1 | is.na(senior_official), 0, senior_official),
+)
+table(df$hog)
+table(df$senior_official)
+
+
+# Remove prefixes from the name column (generating new clean name column) 
+unique(df$participant_prefix)
+
+title_regex_start <- "^(H\\.E\\. Mr\\. Dr\\.|H\\.E\\. Mr\\.|H\\.E\\. Ms\\.|S\\.E\\. Mme\\.|S\\.E\\. M\\.|S\\.E\\. Sra\\.|S\\.E\\. Sr\\.|S\\.E\\.|H\\.E\\.|Mr\\. Dr\\.|Ms\\. Dr\\.|Ministro|Ambassador|Mme\\.|Mme|M\\.|Mr\\.|Ms\\.|Mr|Ms|Dr\\.|Sra\\.|Sr\\.|Amb\\.|Hon\\.|Dr |Miss |H\\.H\\.|Dr, |Shaikha |Shaikh|Sh\\.|Prof\\.|Ind\\.|H\\.R\\.H\\.|HRH|His Royal Highness Crown Prince|His Majesty|Her Majesty|H\\.R\\.H|Honorable|Rt\\.Hon\\.|Engr\\.|Amb\\.|H\\. E\\. Amb\\.|Chief|Major|eH\\.H\\.|Khalifa|Rt Hon|The Hon|Baroness|The Baroness|Mx\\.|Honourable|Deputy|Senator|Col\\.|Hon |H\\.M\\.|H\\.s\\.h\\.|S\\.\\A\\.\\R\\.|NT |H\\.H\\. SH\\.|H\\.H\\. Mr\\.|H\\.E\\. Mr\\. Col\\.|H\\.M\\. King|H\\.R\\.H\\. Mr\\.|H\\.H\\. Prince|H\\.H\\. Ms\\.|Mr\\. H\\.E\\.|H\\.r\\.h\\.|ial)"
+
+df$participant_name_cleaned <- str_remove(df$participant_name, title_regex_start) %>% trimws() %>% tolower()
+COP28_overflow$participant_name_cleaned <- str_remove(COP28_overflow$participant_name, title_regex_start) %>% trimws() %>% tolower()
+
+
+# Add information on whether SB participant has also been at COP
+get_overlap <- function(SB_event, COP_event, data = df){  
+  # COP vs. SB
+  SB <- data %>% filter(event == SB_event)
+  COP <- data %>% filter(event == COP_event)
+  
+  overlap <- data.frame(SB = character(),
+                        COP = character(),
+                        name_SB = character(),
+                        delegation = character(),
+                        name_COP_dl = character(),
+                        name_COP_jw = character(),
+                        min_distance_dl = integer(),
+                        max_similarity_jw = numeric(),
+                        Overlap_dl = integer(),
+                        Overlap_jw = integer(),
+                        stringsAsFactors = FALSE)
+  
+  # Loop through each entry in SB42
+  for (i in 1:nrow(SB)) {
+    name_SB <- SB$participant_name_cleaned[i]
+    cntry_SB <- SB$participant_country_std[i]
+    
+    # Subset COP to only include the same country delegation
+    cop_delegation <- COP[COP$participant_country_std == cntry_SB,]
+    
+    if(nrow(cop_delegation) > 0){
+        # Initialize the minimum distance and corresponding name
+      min_distance <- Inf
+      max_similarity <- -Inf
+      closest_name_dl <- NA
+      closest_name_jw <- NA
+      
+      # Loop through each entry in the subsetted COP21 delegation
+      for (j in 1:nrow(cop_delegation)) {
+        name_COP <- cop_delegation$participant_name_cleaned[j]
+        
+        # Calculate Damerau-Levenshtein string distance
+        distance <- stringdist::stringdist(name_SB, name_COP, method = "dl")
+        
+        # Update the closest name if the current distance is smaller
+        if (distance < min_distance) {
+          min_distance <- distance
+          closest_name_dl <- name_COP
+        }
+      
+         # Calculate Jaro-Winkler similarity
+        similarity <- 1 - stringdist::stringdist(name_SB, name_COP, method = "jw", p=0.1)
+        
+        # Update the closest name if the current similarity is higher
+        if (similarity > max_similarity) {
+          max_similarity <- similarity
+          closest_name_jw <- name_COP
+        }
+      }
+      
+      # Determine if there's an overlap based on the distance
+      overlap_value_dl <- ifelse(min_distance <= 2, 1, 0)
+      
+      
+      # Determine if there's an overlap based on the similarity threshold
+      overlap_value_jw <- ifelse(max_similarity >= 0.85, 1, 0)  # Adjust threshold as needed
+      
+      
+      # Add a new row to the overlap dataframe
+      overlap <- rbind(overlap, data.frame(SB = SB_event,
+                                           COP = COP_event,
+                                           name_SB = name_SB,
+                                           delegation = cntry_SB,
+                                           name_COP_dl = closest_name_dl,
+                                           name_COP_jw = closest_name_jw,
+                                           min_distance_DL = min_distance,
+                                           Overlap_dl = overlap_value_dl,
+                                           max_similarity_jw = max_similarity,
+                                           Overlap_jw = overlap_value_jw,
+                                           stringsAsFactors = FALSE))
+    } else { # for delegations present at SB but not at COP
+      overlap <- rbind(overlap, data.frame(SB = SB_event,
+                                           COP = COP_event,
+                                           name_SB = name_SB,
+                                           delegation = cntry_SB,
+                                           name_COP_dl = NA_character_,
+                                           name_COP_jw = NA_character_,
+                                           min_distance_DL = NA_character_,
+                                           Overlap_dl = 0,
+                                           max_similarity_jw = NA_real_,
+                                           Overlap_jw = 0,
+                                           stringsAsFactors = FALSE))
+    }
+    
+    # Print progress
+    # print(paste("Done with", i))
+  }
+  return(overlap)
+}
+  
+overlap_SB42 <- get_overlap(SB_event = "SB42", COP_event = "COP21", data = df)
+overlap_SB46 <- get_overlap(SB_event = "SB46", COP_event = "COP23", data = df)
+overlap_SB50 <- get_overlap(SB_event = "SB50", COP_event = "COP25", data = df)
+overlap_SB56 <- get_overlap(SB_event = "SB56", COP_event = "COP27", data = df)
+overlap_SB58 <- get_overlap(SB_event = "SB58", COP_event = "COP28", data = df)  
+
+
+df_overflow <- df %>% filter(event == "SB58") %>% bind_rows(COP28_overflow)
+overlap_SB58_overflow <- get_overlap(SB_event = "SB58", COP_event = "COP28", data = df_overflow)  
+table(overlap_SB58_overflow$Overlap_jw)
+
+disagreements <- overlap_SB56 %>% filter(Overlap_dl != Overlap_jw)
+
+
+# Check disgareements between JW and DL
+disagreements <- overlap_SB58_overflow %>% filter(Overlap_dl != Overlap_jw)
+agreements <- overlap_SB58_overflow %>% filter(Overlap_dl == Overlap_jw)
+matches <- agreements %>% filter(Overlap_dl == 1)
+matches_overflow <- agreements %>% filter(Overlap_dl == 1) %>% group_by(delegation) %>% summarize(`Overlap with overflow` = n())
+write.xlsx(matches_overflow, "COP28_overflow_SB_delegates_by_country.xlsx")
+table(agreements$Overlap_dl)
+
+
+# Manually remove false matches
+no_overlap_SB42 <- c(
+  "boryana kabzimalska",
+  "michel ndjatsana",
+  "robert turnock",
+  "luis fierro",
+  "yaling wu",
+  "christina pitta",
+  "emmanuel tabange biese",
+  "christina ravn",
+  "marie bondu",
+  "marko berglund",
+  "marie acton",
+  "jean-michel andrieux",
+  "sophie beaujeu",
+  "dominique bertoncini",
+  "jean pierre bidau",
+  "sylvie corbet",
+  "sabrina coulaud",
+  "nicolas dasnois",
+  "arnaud deplanque",
+  "philippe dubuquet",
+  "antoine ebel",
+  "philippe etienne",
+  "alexandra fory",
+  "audrey hermant",
+  "benoit laffont",
+  "valérie leleu",
+  "jean-claude lemasson",
+  "sandrine ménard",
+  "olivier predhomme",
+  "olivier ravanello",
+  "vincent suty",
+  "alexandre train",
+  "thierry vilain",
+  "philipp knill",
+  "martin weiss",
+  "christian grossheim",
+  "andrea iro",
+  "michael brossmann",
+  "sebastian rueter",
+  "ioannis ziomas",
+  "ioannis sempos",
+  "alpha oumar kaloga",
+  "amit singla",
+  "yuichi yokoi",
+  "kunihiko kitabayashi",
+  "hideaki saito",
+  "hiroaki takiguchi",
+  "takeshi enoki",
+  "masato yano",
+  "ieva dzalbe",
+  "raimonds kass",
+  "gusts zustenieks",
+  "andrius grikienis",
+  "moulay el hassan zoubir idrissi",
+  "michel rentenaar",
+  "henrik harboe",
+  "marianne karlsen",
+  "carlos gómez",
+  "margarita songco",
+  "anna olecka",
+  "hamad al-ahbabi",
+  "mohammed al-buainain",
+  "abdulaziz al-muhannadi",
+  "ahmad al-sulaiti",
+  "yoonseong kim",
+  "dongki kim",
+  "young-hwan kim",
+  "rae hyun kim",
+  "abdulrahman n. al qahtani",
+  "amadou moctar dieye",
+  "ulrika rinman",
+  "sione fulivai",
+  "mustafa boran",
+  "pelin haberal",
+  "zafer ates",
+  "obaid ahmed al zaabi",
+  "lucy collyer",
+  "elizabeth mary hyatt",
+  "thomas bain",
+  "matthew packer",
+  "pham thi kim anh",
+  "tran anh tuan",
+  "veronica nonhlanhla"
+)
+
+no_overlap_SB46 <- c(
+"sonam dagay",
+"xiaoming deng",
+"guanyang dong",
+"jing liao",
+"stéphane crouzat",
+"richard daniel",
+"jean-luc fulachier",
+"laurent grave-raulin",
+"stéphane reiche",
+"nicolas udrea",
+"katharina stepping",
+"christian fronczak",
+"jennifer zaspel",
+"tobias hausotter",
+"ulia olivier",
+"susanna hoenle",
+"horst steg",
+"stefan mager",
+"emmanuel osae-quansah",
+"charles sarpong duah",
+"endang tri septa kurniawati",
+"muhammad ihsan",
+"rizki maulana rachman",
+"mario iannotti",
+"takashi kobayashi",
+"naoko inamoto",
+"akihiko inomata",
+"norihiro kimura",
+"makoto tanikura",
+"masayoshi kurisu",
+"esther m. wangombe",
+"cheikh mohamed elabd",
+"mohammed badraoui",
+"mohamed boussaid",
+"khadija el houdi",
+"mohamed yassin",
+"muhammad imran khan",
+"manuel nivera",
+"abdulrahman ahmad al-tamimi",
+"jaein kim",
+"eun jung choi",
+"jungeun lee",
+"dongwon seo",
+"oleg shamanov",
+"aleksandra rzhavina",
+"vladimir stepanov",
+"ahmed a. albabtain",
+"abdullah s. al ghamdi",
+"ahmed a. alharthy",
+"abdou salam kane",
+"lamine samake",
+"el hadj idrissa mbaye",
+"kristina akesson",
+"christine zundel",
+"mustafa demirelli",
+"mustafa boran",
+"mustafa arslan",
+"neslihan ozicli",
+"zeynep guduk",
+"chi-nien jin",
+"fatima ahmed alkadhim",
+"abdulla saleh almenhali",
+"fatma essa almheiri",
+"thuy tran thanh",
+"huy pham quang"
+)
+
+no_overlap_SB50 <- c(
+ "ahmad shouib jahesh", 
+ "mohamed amari", 
+ "bouchra boudaoud", 
+ "abdelouahab bouttout", 
+ "fatma ezzouhra mesbaiah", 
+ "steven brine", 
+ "nicolas galudec", 
+ "kabelo lebohang", 
+ "chee tiong goh", 
+ "anh nguyen ngoc", 
+ "anh nguyen thi van", 
+ "alejandro mitri", 
+ "rochelle mckinney", 
+ "rhianna neely", 
+ "md. moniruzzaman", 
+ "md. mazedul islam", 
+ "md harun or rashid", 
+ "abdullah al arif", 
+ "sonam lhaden khandu", 
+ "tshering yangzom", 
+ "ricardo araujo", 
+ "adriana bueno", 
+ "dk nur afifah atikah pg hj ismail", 
+ "mamadou batiene", 
+ "patrick fancott", 
+ "kelly sharp", 
+ "jingxuan hui", 
+ "yuanyuan qin", 
+ "bin wang", 
+ "qianyue wang", 
+ "da zhang", 
+ "xi zhang", 
+ "daniel slovák", 
+ "charlotte ekia botonga", 
+ "jean mukeba mukanya", 
+ "daniela sifontes", 
+ "ahmed aboulenien", 
+ "fortunato eko nsogo mangue", 
+ "izhaar ali", 
+ "stéphane crouzat", 
+ "rémy ruat", 
+ "claudia heidecke", 
+ "corinna klein", 
+ "thomas reineke", 
+ "sebastian rueter", 
+ "charles sarpong duah", 
+ "dimitrios niavis", 
+ "kinga csontos", 
+ "barbara kovács", 
+ "jeevan kumar jethani", 
+ "sigit irfansyah", 
+ "muhammad yusuf", 
+ "ratna sarwilujeng", 
+ "mohammad ikhsan shiddieqy", 
+ "mohammad geramifar", 
+ "mustafa mohammed hathal fukaiki", 
+ "john redmond", 
+ "patrick rooney", 
+ "alessandro dionisio negrin", 
+ "junichiro otaka", 
+ "hiroki hatakeyama", 
+ "toru hayashi", 
+ "tomoya ijima", 
+ "takayuki ishikawa", 
+ "hirotaka ishikawa", 
+ "satoshi katahira", 
+ "atsushi minami", 
+ "kazuaki miyata", 
+ "kazumasa okao", 
+ "takashi omote", 
+ "yoko sakashita", 
+ "hiroaki seno", 
+ "daisuke suginoo", 
+ "hiroaki takano", 
+ "hiromi taniguchi", 
+ "hiroki tokunaga", 
+ "risa yasui", 
+ "david b. adegu", 
+ "hillary c. korir", 
+ "julius k. mbatia", 
+ "francis k. mwangi", 
+ "anne n. obae", 
+ "esther m. wangombe", 
+ "abdullah bo-khalaf", 
+ "elina simina-neverovska", 
+ "retsepile amos neko", 
+ "lantoniaina herisoa andriafenomiarisoa", 
+ "lantonirina ratovonjanahary", 
+ "noor abidah mohd dawi", 
+ "ahmed salem sellahi", 
+ "mohamed sid el moctar", 
+ "kyaw lwin oo", 
+ "ram prasad lamsal", 
+ "ana carolina moreno villarreal", 
+ "catarina alves", 
+ "pedro baptista", 
+ "gonçalo cavalheiro", 
+ "miguel martins", 
+ "ricardo vieira", 
+ "jiyoung choi", 
+ "jung han", 
+ "hyunjoo jeong", 
+ "seongsoo kang", 
+ "yeantae kim", 
+ "myung chul seo", 
+ "sangmin shim", 
+ "nayoung yim", 
+ "vladimir artisyuk", 
+ "alexandr dukarev", 
+ "anastasia grebennikova", 
+ "polina lion", 
+ "alexander samorodov", 
+ "marina spiridonova", 
+ "mohammed s. albrrak", 
+ "abdulaziz a. alamri", 
+ "faisal m. alswied", 
+ "abdullah g. alroomi", 
+ "abdullah a. almoallimi", 
+ "ahmed s. aljameel", 
+ "basem a. alharbi", 
+ "abdullah m. alsubaie", 
+ "lamine diatta", 
+ "el hadji djibril diop", 
+ "fatima niang", 
+ "mamadou sambou", 
+ "ludmila chovancova", 
+ "maría josé alonso moya", 
+ "louise hermann", 
+ "komlan edou", 
+ "samir amous", 
+ "fatima mohammed khalifa alfoora alshamsi", 
+ "victoria boyes", 
+ "ciaran deeney", 
+ "claire holzer fleming", 
+ "jonathan martin", 
+ "peter meuli", 
+ "nicholas prokopiou", 
+ "andrew rakestraw", 
+ "michael mauer", 
+ "brian ratcliffe", 
+ "leana william", 
+ "duong tran anh", 
+ "tafadzwa o. dhlakama"
+)
+
+no_overlap_SB56 <- c(
+  "fernando machado diniz",
+  "gregory flato",
+  "ahmat djamaladine mahamat",
+  "rodrigo andrade ramírez",
+  "nadia sánchez",
+  "xiaofeng guo",
+  "amr abdelaziz abdelfatah ali",
+  "randa mahmoud gamil eldieb",
+  "mohammed abdelrahman elewa",
+  "mohamed farag mohamed farag",
+  "mahmoud mohamed safwat mohieldin",
+  "peter iversen",
+  "mathieu ardourel",
+  "patricia larbouret",
+  "charlotte lerat",
+  "florine maurel",
+  "philipp behrens",
+  "dirk guenther",
+  "thomas reineke",
+  "ahmed salih mahdi mahdi",
+  "ilaria falconi",
+  "yuri murakami",
+  "noriko hase",
+  "jassem alameri",
+  "mohammad alsowail",
+  "abdullah bo-khalaf",
+  "charlene venessa talery",
+  "christopher buldee gwion",
+  "mohammed alsoudani",
+  "mohamad firdaus nawawi",
+  "mohd fairuz md suptian",
+  "abdou yehia",
+  "khamis mohamed al zidi",
+  "mohammed omar al-bader",
+  "hyunjun kim",
+  "subin lee",
+  "hyoungseok lee",
+  "alexey dronov",
+  "amro t. alharbi",
+  "abdullah alraddadi",
+  "mohammed a. alshamsi",
+  "moussa diop",
+  "aissatou fall ndoye guèye",
+  "umit turhan",
+  "joshua aijuka",
+  "pamela awino",
+  "lawrence songa biyika",
+  "joseph lule",
+  "mohamed kashwani",
+  "virginia bennett",
+  "sanlan william",
+  "huong doan thi xuan",
+  "anh le hoang",
+  "anh to nguyen cam"
+)
+
+no_overlap_SB58 <- c(
+  "aram araratyan",
+  "elman muradov",
+  "adriana brito da silva",
+  "marina caetano pereira vicente",
+  "cristhyano cavali da luz",
+  "alexandre curvelo de almeida prado",
+  "patricia de almeida zuppi",
+  "pedro affonso duarte hartung",
+  "francisco edilson ferreira de lima júnior",
+  "karina faria de melo",
+  "joão paulo mello amaral",
+  "rodrigo otaviano vilaça",
+  "tatiana santos oliveira",
+  "fatouma abdallah",
+  "eva adamova",
+  "zuzana rošková",
+  "amr essameldin ahmed",
+  "ashraf farouk elsayed bayoumy",
+  "ahmed amir ibrahim mohamed salah",
+  "béatrice coroenne",
+  "sophia engel",
+  "stefanie gastrow",
+  "dirk guenther",
+  "karsten karschunke",
+  "alok",
+  "vinod kumar singh",
+  "budiharto",
+  "ratnasari",
+  "giulia maria baldinelli",
+  "toshihiro kitamura",
+  "megumi ishizuka",
+  "saiko saito",
+  "takafumi kikuchi",
+  "kazuki yanagisawa",
+  "takashi misumi",
+  "yosuke shimizu",
+  "daisuke sasano",
+  "shohei goto",
+  "mohamed t. bidu",
+  "yvonne a ndanu",
+  "fredrick onyango odawo",
+  "rashid alajmi",
+  "abdulaziz alibraheem",
+  "yousef alnajar",
+  "mohamed s a swidan",
+  "mohamad ramli bin mohamad roslan",
+  "mohamad farid bin mohd aris",
+  "moussa diakite",
+  "bárbara urtaza torres",
+  "heleen van soest",
+  "bashir abdullahi",
+  "muhammad shahsawar shareef",
+  "george carter",
+  "maria lynn melosantos",
+  "jakub gibek",
+  "maciej birecki",
+  "lukasz jeznach",
+  "bader ali al-amari",
+  "abdulla anbar al-jassim",
+  "jassem mohamed al-mulla",
+  "khaled khater al-sulaiti",
+  "doyoung kim",
+  "hokyung jung",
+  "taeyoon kim",
+  "mikhail arshinov",
+  "boris belan",
+  "alexey dronov",
+  "alexandra khlebnova",
+  "artem rosliakov",
+  "anastasia sazonova",
+  "yury uraksin",
+  "victoria vertyankina",
+  "aria vorozhtsova",
+  "nasser khaled abanmi",
+  "abdullah alenazi",
+  "abdullkarim ahmed almaashi",
+  "abdullrahman hamza maghrabi",
+  "dumisani mthembu",
+  "ennifer carlestam",
+  "neslihan agartan",
+  "necati cem aktuz",
+  "esra ince",
+  "elif gokce oz",
+  "fatma tok",
+  "joshua aijuka",
+  "irene eyatu amajo",
+  "charles  kabiswa",
+  "stephen mubiru",
+  "oleksandr artemenko",
+  "noora al amer",
+  "dhabia al qubaisi",
+  "asma alameri",
+  "ali sahil alhashimi",
+  "khalifa almansoori",
+  "sara alzaabi",
+  "majid alzarooni",
+  "saif bawazir",
+  "abdelaziz harib",
+  "athra ibrahim",
+  "khalid abdullah ali tebe",
+  "hannah ashley",
+  "amber mitchell",
+  "lillian bermel",
+  "ngoc hung nguyen",
+  "thi phuong linh nguyen",
+  "christabel zulu"
+)
+
+
+overlap_SB42 <- overlap_SB42 %>% mutate(
+  overlap = if_else(Overlap_jw == 1 & !name_SB %in% no_overlap_SB42, 1, 0),
+  name_COP_cleaned = name_COP_jw
+  ) %>% select(event = SB, COP, participant_country_std = delegation, name_SB_cleaned = name_SB, name_COP_cleaned, overlap)
+
+table(overlap_SB42$overlap)
+
+
+# Some further adjustments
+true_overlap_SB42 <- c(
+  "aria neaeesh",
+  "kaci belaid"
+)
+overlap_SB42 <- overlap_SB42 %>% mutate(
+  overlap = if_else(name_SB_cleaned %in% true_overlap_SB42, 1, overlap)  
+  )
+
+
+overlap_SB46 <- overlap_SB46 %>% mutate(
+  overlap = if_else(Overlap_jw == 1 & !name_SB %in% no_overlap_SB46, 1, 0),
+  name_COP_cleaned = name_COP_jw
+  ) %>% select(event = SB, COP, participant_country_std = delegation, name_SB_cleaned = name_SB, name_COP_cleaned, overlap)
+
+table(overlap_SB46$overlap)
+
+# Some further adjustments
+true_overlap_SB46 <- c(
+ "brigitte collet",
+ "rueanna haynes",
+ "crispin d'auvergne"
+)
+overlap_SB46 <- overlap_SB46 %>% mutate(
+  overlap = if_else(name_SB_cleaned %in% true_overlap_SB46, 1, overlap)  
+  )
+
+table(overlap_SB46$overlap)
+
+
+overlap_SB50 <- overlap_SB50 %>% mutate(
+  overlap = if_else(Overlap_jw == 1 & !name_SB %in% no_overlap_SB50, 1, 0),
+  name_COP_cleaned = name_COP_jw
+  ) %>% select(event = SB, COP, participant_country_std = delegation, name_SB_cleaned = name_SB, name_COP_cleaned, overlap)
+
+table(overlap_SB50$overlap)
+
+# Some further adjustments
+true_overlap_SB50 <- c(
+  "eugénie doh epse gagne"
+)
+overlap_SB50 <- overlap_SB50 %>% mutate(
+  overlap = if_else(name_SB_cleaned %in% true_overlap_SB50, 1, overlap)  
+  )
+
+table(overlap_SB50$overlap)
+
+
+overlap_SB56 <- overlap_SB56 %>% mutate(
+  overlap = if_else(Overlap_jw == 1 & !name_SB %in% no_overlap_SB56, 1, 0),
+  name_COP_cleaned = name_COP_jw
+  ) %>% select(event = SB, COP, participant_country_std = delegation, name_SB_cleaned = name_SB, name_COP_cleaned, overlap)
+
+table(overlap_SB56$overlap)
+
+
+overlap_SB58 <- overlap_SB58 %>% mutate(
+  overlap = if_else(Overlap_jw == 1 & !name_SB %in% no_overlap_SB58, 1, 0),
+  name_COP_cleaned = name_COP_jw
+  ) %>% select(event = SB, COP, participant_country_std = delegation, name_SB_cleaned = name_SB, name_COP_cleaned, overlap)
+
+table(overlap_SB58$overlap)
+
+
+overlap_SBs <- overlap_SB42 %>%  bind_rows(overlap_SB46, overlap_SB50, overlap_SB56, overlap_SB58)
+
+overlap_stats <- overlap_SBs %>% group_by(event = COP, participant_country_std) %>% summarize(
+  total_SB_delegates = n(),
+  total_overlap = sum(overlap, na.rm = TRUE),
+  total_SB_only_delegates = if_else(!is.na(total_SB_delegates - total_overlap), total_SB_delegates - total_overlap, as.numeric(total_SB_delegates)),
+  share_SB_COP_overlap = if_else(is.finite(total_overlap/total_SB_delegates), total_overlap/total_SB_delegates, 0)  
+) %>% ungroup()
+
+
+# Aggregate data to country level
+df_tot <- df %>% group_by(event, participant_country_std, year) %>% summarise(
+  delegation_size = n(),
+  no_high_level_participants = sum(high_level, na.rm = TRUE),
+  no_senior_officials = sum(senior_official, na.rm = TRUE),
+  no_hogs = sum(hog, na.rm = TRUE),
+  no_agencies_units = n_distinct(participant_agency_ministry)
+) %>% mutate(
+  high_level = if_else(no_high_level_participants > 0, 1, 0),
+  hog = if_else(no_hogs > 0, 1, 0)
+) %>% ungroup()
+
+df_SB <- df_tot %>% filter(event %in% c("SB42","SB46","SB50", "SB56", "SB58"))
+df_COP <- df_tot %>% filter(event %in% c("COP21","COP23","COP25", "COP27", "COP28"))
+
+
+# Add COP21/SB50 figures to test inertia
+COP21 <- df_COP %>% filter(event == "COP21") %>% select(delegation_size_COP21 = delegation_size, participant_country_std)
+SB42 <- df_SB %>% filter(event == "SB42") %>% select(delegation_size_SB42 = delegation_size, participant_country_std)
+COP23 <- df_COP %>% filter(event == "COP23") %>% select(delegation_size_COP23 = delegation_size, participant_country_std)
+SB46 <- df_SB %>% filter(event == "SB46") %>% select(delegation_size_SB46 = delegation_size, participant_country_std)
+COP25 <- df_COP %>% filter(event == "COP25") %>% select(delegation_size_COP25 = delegation_size, participant_country_std)
+SB50 <- df_SB %>% filter(event == "SB50") %>% select(delegation_size_SB50 = delegation_size, participant_country_std)
+COP27 <- df_COP %>% filter(event == "COP27") %>% select(delegation_size_COP27 = delegation_size, participant_country_std)
+SB56 <- df_SB %>% filter(event == "SB56") %>% select(delegation_size_SB56 = delegation_size, participant_country_std)
+
+
+df_COP <-  df_COP %>% left_join(COP21, by = "participant_country_std")
+df_COP <-  df_COP %>% left_join(COP23, by = "participant_country_std")
+df_COP <-  df_COP %>% left_join(COP25, by = "participant_country_std")
+df_COP <-  df_COP %>% left_join(COP27, by = "participant_country_std")
+df_SB <- df_SB %>% left_join(SB42, by = "participant_country_std")
+df_SB <- df_SB %>% left_join(SB46, by = "participant_country_std")
+df_SB <- df_SB %>% left_join(SB50, by = "participant_country_std")
+df_SB <- df_SB %>% left_join(SB56, by = "participant_country_std")
+
+
+# Merge overlap figures to COP dataframe
+df_COP <- df_COP %>% left_join(overlap_stats, by = c("event", "participant_country_std"))
+
+COP28_overflow_agg <- COP28_overflow %>% group_by(event, participant_country_std) %>% summarise(
+  overflow_delegates = n()
+) %>% ungroup()
+
+df_COP <- df_COP %>% left_join(COP28_overflow_agg, by = c("event", "participant_country_std")) %>% mutate(
+  overflow_delegates = if_else(is.na(overflow_delegates) & event == "COP28", 0, as.numeric(overflow_delegates)) # adding true zeros for delegations without overflow
+)
+
+
+# Saving data for quicker recovery
+save(df_COP, file = "df_COP.RData")
+save(df_SB, file = "df_SB.RData")
+save(df_tot, file = "df_tot.RData")
+
+rm(COP21_2, df_hog, df_ministers, df_other_hl, COP21, COP23, COP25, COP28, SB42, SB46, SB50, SB58, overlap_SBs, overlap_SB42, overlap_SB46, overlap_SB50, overlap_SB58)
+```
+
+
+## Load data
+
+```{r}
+load("df_COP.RData")
+load("df_SB.RData")
+load("df_tot.RData")
+```
+
+
+## Summary statistics
+
+```{r, echo=FALSE}
+# Simple arithmetic to check how many delegations are needed at minimum
+# to cover a certain share of overall participants
+result_50 <- df_COP %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 0.50) + 1
+  )
+
+
+result_10 <- df_COP %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 0.10) + 1
+  )
+
+
+result_25 <- df_COP %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 0.25) + 1
+  )
+
+
+result_33 <- df_COP %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 1/3) + 1
+  )
+
+
+COP_28_cumsum <- df_COP %>% filter(event == "COP28") %>%  
+  arrange(desc(delegation_size)) %>% 
+   mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates)
+
+
+result_33_SB <- df_SB %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 1/3) + 1
+  )
+
+
+result_50_SB <- df_SB %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 0.5) + 1
+  )
+
+
+result_25_SB <- df_SB %>%
+  group_by(event) %>%
+  arrange(event, desc(delegation_size)) %>%
+  mutate(cumulative_delegates = cumsum(delegation_size),
+         total_delegates = sum(delegation_size)) %>%
+  mutate(cumulative_percentage = cumulative_delegates / total_delegates) %>%
+  summarise(
+    delegations_needed = sum(cumulative_percentage <= 0.25) + 1
+  )
+
+
+df_plot <- df_COP %>%
+  arrange(event, desc(delegation_size)) %>%
+  group_by(event) %>%
+  mutate(order = row_number())
+
+# Define the starting color and create a color gradient
+start_color <- "#7c247c"
+n <- nrow(df_plot)
+colors <- colorRampPalette(c(start_color, "white"))(n)
+
+# Generate the plot for figure: "Distribution of Delegation Sizes at COP28"
+p1 <- ggplot(df_plot %>% filter(event == "COP28"), aes(x = order, y = delegation_size, fill = as.factor(order))) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colors) +
+  facet_wrap(~ event, scales = "free_x") +
+  labs(x = "Delegation (large to small)", y = "Delegation Size", fill = "Order") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggsave(plot = p1, file = "./plots/COP28_size_distr.png", width = 7, height = 5, units = "in")
+```
+
+
+## Ratio of delegation sizes
+
+```{r, echo=FALSE}
+
+df_ratios <- df_COP %>% left_join(df_SB, by = c("participant_country_std", "year"), suffix = c("", "_SB"))
+df_ratios <- df_ratios %>% mutate(ratio_COP_SB = delegation_size/delegation_size_SB)
+summary(df_ratios$ratio_COP_SB)
+
+# exploring how that ratio evolves with delegation size
+df_ratios %>% filter(delegation_size>150) %>% pull(ratio_COP_SB) %>% summary()
+```
+
+
+## Figures: Delegation Size by event
+
+```{r, echo=FALSE}
+
+# Figure: "Distribution of COP Delegation Sizes Over Time (min./max. indicated by bars)"
+df_stats_COP <- df_COP %>%
+  group_by(event) %>%
+  summarise(
+    mean_delegation_size = mean(delegation_size, na.rm = TRUE),
+    median_delegation_size = median(delegation_size, na.rm = TRUE),
+    min_delegation_size = min(delegation_size, na.rm = TRUE),
+    max_delegation_size = max(delegation_size, na.rm = TRUE)
+  )
+
+p <- ggplot(df_stats_COP, aes(x = event)) +
+  geom_point(aes(y = mean_delegation_size, color = "Mean"), size = 3) +
+  geom_point(aes(y = median_delegation_size, color = "Median"), size = 3) +
+  geom_errorbar(aes(ymin = min_delegation_size, ymax = max_delegation_size), width = 0.2) +
+  geom_line(aes(y = mean_delegation_size, color = "Mean"), size = 1) +
+  geom_line(aes(y = median_delegation_size, color = "Median"), size = 1) +
+  labs(
+    title = '',
+    y = 'Delegation Size',
+    x = 'Event',
+    color = 'Statistic'
+  ) +
+  theme_minimal() + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("Mean" = "#7c247c", "Median" = "darkgrey")) 
+ggsave(plot = p, file = "./plots/COP_size_distr.png", width = 7, height = 5, units = "in")
+
+
+# Figure: "Distribution of SB Delegation Sizes Over Time (min./max. indicated by bars)"
+df_stats <- df_SB %>%
+  group_by(event) %>%
+  summarise(
+    mean_delegation_size = mean(delegation_size, na.rm = TRUE),
+    median_delegation_size = median(delegation_size, na.rm = TRUE),
+    min_delegation_size = min(delegation_size, na.rm = TRUE),
+    max_delegation_size = max(delegation_size, na.rm = TRUE)
+  )
+
+p <- ggplot(df_stats, aes(x = event)) +
+  geom_point(aes(y = mean_delegation_size, color = "Mean"), size = 3) +
+  geom_point(aes(y = median_delegation_size, color = "Median"), size = 3) +
+  geom_errorbar(aes(ymin = min_delegation_size, ymax = max_delegation_size), width = 0.2) +
+  geom_line(aes(y = mean_delegation_size, color = "Mean"), size = 1) +
+  geom_line(aes(y = median_delegation_size, color = "Median"), size = 1) +
+  labs(
+    title = '',
+    y = 'Delegation Size',
+    x = 'Event',
+    color = 'Statistic'
+  ) +
+  theme_minimal() + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("Mean" = "#7c247c", "Median" = "darkgrey")) 
+ggsave(plot = p, file = "./plots/SB_size_distr.png", width = 7, height = 5, units = "in")
+
+
+# Figure: "Average COP Delegation Size Depending on the Presence of a Head of State/Government"
+df_avg <- df_COP %>%
+  group_by(event, hog) %>%
+  summarise(avg_delegation_size = mean(delegation_size, na.rm = TRUE)) %>%
+  ungroup() %>% mutate(
+    hog = ifelse(hog == 1, "Yes", "No")
+  )
+
+p2 <- ggplot(df_avg, aes(x = event, y = avg_delegation_size, fill = as.factor(hog))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = 'Delegation Size by COP and Presence of Head of Government',
+    x = 'Event',
+    y = 'Average Delegation Size',
+    fill = 'Head of Government'
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("darkgrey", "#7c247c")) +  
+  theme(legend.position = "bottom")
+ggsave(plot = p2, file = "./plots/COP_size_by_hog.png", width = 7, height = 5, units = "in")
+
+
+# Color definitions for subsequent figures
+color_grey = "grey"
+color_dark_grey = "#505050"  # A darker grey
+color_light_purple = "#b055b0"  # A lighter purple
+color_purple = "#7c247c"
+
+
+# Figure: "Average COP Delegation Size by the Number of High-Level Participants Over Time"
+df_avg_senior_off <- df_COP %>%
+  mutate(no_high_level_participants_chr = case_when(
+    no_high_level_participants == 0 ~ '0',
+    no_high_level_participants >= 1 & no_high_level_participants <= 3 ~ '1-3',
+    no_high_level_participants >= 4 & no_high_level_participants <= 6 ~ '4-6',
+    no_high_level_participants >= 7 ~ '7+', 
+    TRUE ~ as.character(no_high_level_participants)
+  )) %>%
+  mutate(no_high_level_participants_chr = factor(no_high_level_participants_chr, levels = c('0', '1-3', '4-6', '7+'))) %>%
+  group_by(event, no_high_level_participants_chr) %>%
+  summarise(avg_delegation_size = mean(delegation_size, na.rm = TRUE)) %>%
+  ungroup()
+
+p3 <- ggplot(df_avg_senior_off, aes(x = event, y = avg_delegation_size, fill = no_high_level_participants_chr)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = '',
+    x = 'Event',
+    y = 'Average Delegation Size',
+    fill = 'High-Level Participants'
+  ) +  scale_fill_manual(values = c(color_grey, color_dark_grey, color_light_purple, color_purple)) + 
+   theme_minimal() +
+   theme(legend.position = "bottom")
+
+ggsave(plot = p3, file = "./plots/COP_size_by_hl.png", width = 7, height = 5, units = "in")
+
+
+# Figure: "Average SB Delegation Size by the Number of High-Level Participants Over Time"
+df_avg_senior_off_SB <- df_SB %>%
+  mutate(no_high_level_participants_chr = case_when(
+    no_high_level_participants == 0 ~ '0',
+    no_high_level_participants == 1 ~ '1',
+    no_high_level_participants >= 2 ~ '2+',
+    TRUE ~ as.character(no_high_level_participants)
+  )) %>%
+  mutate(no_high_level_participants_chr = factor(no_high_level_participants_chr, levels = c('0', '1', '2+'))) %>%
+  group_by(event, no_high_level_participants_chr) %>%
+  summarise(avg_delegation_size = mean(delegation_size, na.rm = TRUE)) %>%
+  ungroup()
+ 
+p4 <- ggplot(df_avg_senior_off_SB, aes(x = event, y = avg_delegation_size, fill = no_high_level_participants_chr)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = '',
+    x = 'Event',
+    y = 'Average Delegation Size',
+    fill = 'High-Level Participants'
+  ) +  scale_fill_manual(values = c(color_grey, color_light_purple, color_purple)) + 
+   theme_minimal() +
+   theme(legend.position = "bottom")
+ggsave(plot = p4, file = "./plots/SB_size_by_hl.png", width = 7, height = 5, units = "in")
+```
+
+
+## The FOMO effect
+```{r}
+# Estimating attendance effects of high-level and head of state participation
+# NOTE: the values provided in the report are 1 lower than the coefficient here,
+# because we refer to additional participation on top of the hog herself (who is also a participant)
+
+df_COP <- df_COP %>% mutate(other_high_level_participants = no_high_level_participants - hog - no_senior_officials)
+
+# 6 more high-level participants (in addition to HOG) if HOG is present
+df_COP %>%  filter(event == "COP28") %>% lm(no_high_level_participants ~ hog, data = .) %>% summary()
+
+# 34 more participants overall if HOG is present + about 7 (5.881*2.2669-5.881) additional participants due to 
+# 'trickle down' effect of extra high-level participation attracted by HOG
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ hog + no_high_level_participants, data = .) %>% summary()
+```
+
+
+## Number of ministries
+
+```{r, warning=FALSE, echo=FALSE}
+# loading ministry data
+df_ministries <- data.table::fread("./data/COP28_classification.csv")
+
+df_ministries <- df_ministries %>% select(Party, no_ministries = `Number_Ministries/Agencies`, ministries = Name_Ministry) %>% mutate(no_ministries = as.numeric(no_ministries))
+
+
+df_COP28 <- df_COP %>% filter(event == "COP28") %>%  left_join(df_ministries, by = c("participant_country_std" = "Party"))
+missings <- df_COP28 %>% filter(is.na(no_ministries)) # cases where we could not perform a good classification
+
+
+df_no_ministries <- df_COP28 %>% filter(!is.na(no_ministries)) %>% 
+  mutate(no_ministries = case_when(
+    no_ministries == 0 ~ '0',
+    no_ministries >= 1 & no_ministries <= 3 ~ '1-3',
+    no_ministries >= 4 & no_ministries <= 6 ~ '4-6',
+    no_ministries >= 7 ~ '7+', 
+    TRUE ~ as.character(no_ministries)
+  )) %>%
+  mutate(no_ministries_chr = factor(no_ministries, levels = c('0', '1-3', '4-6', '7+'))) %>%
+  group_by(event, no_ministries) %>%
+  summarise(avg_delegation_size = mean(delegation_size, na.rm = TRUE)) %>%
+  ungroup()
+
+
+# Figure: "Average COP28 Delegation Size by the Number of Ministries Represented in the Delegation"
+color_grey = "grey"
+color_dark_grey = "#505050"  # A darker grey
+color_light_purple = "#b055b0"  # A lighter purple
+color_purple = "#7c247c"
+
+p5 <- ggplot(df_no_ministries, aes(x = event, y = avg_delegation_size, fill = no_ministries)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = '',
+    x = 'Event',
+    y = 'Average Delegation Size',
+    fill = 'No. Ministries in Delegation'
+  ) +  scale_fill_manual(values = c(color_grey, color_light_purple, color_purple)) + 
+   theme_minimal() +
+   theme(legend.position = "bottom")
+
+ggsave(plot = p5, file = "./plots/COP28_size_by_ministries.png", width = 7, height = 5, units = "in")
+```
+
+
+## COP28 Delegation Overflow
+
+```{r overflow, echo=FALSE}
+df_COP %>% filter(event == "COP28") %>% ggplot() + geom_point(aes(x = delegation_size, y = overflow_delegates))
+df_COP %>% filter(event == "COP28") %>% ggplot() + geom_density(aes(x = overflow_delegates))
+
+table(df_COP$overflow_delegates)
+
+df_plot <- df_COP %>%
+  arrange(event, desc(delegation_size)) %>%
+  group_by(event) %>%
+  mutate(order = row_number())
+
+# Figure: "Number of Overflow Badges per Delegation, Ordered by Core Delegation Size"
+start_color <- "#7c247c"
+n <- nrow(df_plot)
+colors <- colorRampPalette(c(start_color, "white"))(n)
+
+p6 <- ggplot(df_plot %>% filter(event == "COP28"), aes(x = order, y = overflow_delegates, fill = as.factor(order))) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colors) +
+  facet_wrap(~ event, scales = "free_x") +
+  labs(x = "Delegation (large to small)", y = "Delegation Overflow", fill = "Order") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggsave(plot = p6, file = "./plots/COP28_overflow_size_distr.png", width = 7, height = 5, units = "in")
+
+sum(df_COP$overflow_delegates, na.rm = TRUE)
+
+# 10 largest overflow delegation figures
+(3487+1264+1075+920+722+630+602+542+525+505)/sum(df_COP$overflow_delegates, na.rm = TRUE)
+```
+
+
+## Summit nostalgia
+```{r}
+# test inertia
+df_COP %>%  filter(event == "COP23") %>% lm(delegation_size ~ delegation_size_COP21, data = .) %>% summary()
+df_COP %>%  filter(event == "COP25") %>% lm(delegation_size ~ delegation_size_COP21, data = .) %>% summary()
+df_COP %>%  filter(event == "COP25") %>% lm(delegation_size ~ delegation_size_COP23, data = .) %>% summary()
+df_COP %>%  filter(event == "COP27") %>% lm(delegation_size ~ delegation_size_COP21, data = .) %>% summary()
+df_COP %>%  filter(event == "COP27") %>% lm(delegation_size ~ delegation_size_COP23, data = .) %>% summary()
+df_COP %>%  filter(event == "COP27") %>% lm(delegation_size ~ delegation_size_COP25, data = .) %>% summary()
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP21, data = .) %>% summary()
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP23, data = .) %>% summary()
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP25, data = .) %>% summary()
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP27, data = .) %>% summary()
+
+
+# Explaining COP28 participation based on previous attendance patterns
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP21 + delegation_size_COP27, data = .) %>% summary()
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP21 + delegation_size_COP23 + delegation_size_COP25 + delegation_size_COP27, data = .) %>% summary()
+
+# Only COP 21
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP21, data = .) %>% summary()
+# Only COP 27
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP27, data = .) %>% summary()
+# COP 23 and 25 - weaker fit than COP21 on its own
+df_COP %>%  filter(event == "COP28") %>% lm(delegation_size ~ delegation_size_COP23 + delegation_size_COP25, data = .) %>% summary()
+```
